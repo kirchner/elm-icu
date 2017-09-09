@@ -60,7 +60,7 @@ view model =
             []
         , Html.pre
             [ Attributes.style
-                [ "height" => "600px"
+                [ "height" => "400px"
                 , "margin" => "0"
                 , "padding" => "10px"
                 , "background-color" => "rgb(254,254,254)"

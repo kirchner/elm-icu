@@ -3,6 +3,7 @@ module Icu exposing (Message, parse, print)
 import Char
 import Html exposing (Html)
 import Html.Attributes as Attributes
+import List.Extra as List
 import Parser exposing (..)
 import Parser.LanguageKit exposing (..)
 import Set
@@ -10,19 +11,12 @@ import String.Extra as String
 
 
 type alias Message =
-    List MessagePart
+    List Part
 
 
-type MessagePart
-    = MessageText String
-    | Argument ArgNameOrNumber ArgDetails
-
-
-type ArgDetails
-    = NoneArg
-    | SimpleArg ArgType
-    | PluralArg PluralStyle
-    | SelectArg SelectStyle
+type Part
+    = Text String
+    | Argument ArgNameOrNumber Details
 
 
 type ArgNameOrNumber
@@ -30,7 +24,15 @@ type ArgNameOrNumber
     | ArgNumber Int
 
 
-type ArgType
+type Details
+    = None
+    | Simple Type (Maybe SimpleStyle)
+    | Plural PluralStyle
+    | Select SelectStyle
+    | Selectordinal PluralStyle
+
+
+type Type
     = Number
     | Date
     | Time
@@ -39,12 +41,23 @@ type ArgType
     | Duration
 
 
-type alias SelectStyle =
-    List Selector
+type SimpleStyle
+    = Integer
+    | Currency
+    | Percent
+    | Short
+    | Medium
+    | Long
+    | Full
+    | Custom String
 
 
-type Selector
-    = Selector String Message
+type SelectStyle
+    = SelectStyle (List SelectSelector)
+
+
+type SelectSelector
+    = SelectSelector String Message
 
 
 type PluralStyle
@@ -78,126 +91,185 @@ icu =
     message
 
 
-message : Parser Message
 message =
-    let
-        handleEmptyList message =
-            case message of
-                [] ->
-                    [ MessageText "" ]
-
-                _ ->
-                    message
-    in
     oneOf
-        [ lazy (\_ -> messagePart)
-        , end |> map (\_ -> MessageText "")
+        [ textPart
+        , lazy (\_ -> argumentPart)
         ]
-        |> andThen
-            (\text -> messageHelper [ text ])
-        |> map handleEmptyList
+        |> repeat oneOrMore
+        |> map joinTextParts
+        |> inContext "a message"
 
 
-messageHelper : Message -> Parser Message
-messageHelper previous =
-    oneOf
-        [ lazy (\_ -> messagePart)
-            |> andThen
-                (\text -> messageHelper (text :: previous))
-        , succeed (List.reverse previous)
-        ]
+joinTextParts : List Part -> List Part
+joinTextParts parts =
+    case parts of
+        [] ->
+            []
+
+        (Text first) :: (Text second) :: rest ->
+            joinTextParts (Text (first ++ second) :: rest)
+
+        first :: rest ->
+            first :: joinTextParts rest
 
 
-messagePart : Parser MessagePart
-messagePart =
-    oneOf
-        [ inContext "an argument" <|
-            succeed Argument
-                |. symbol "{"
+textPart : Parser Part
+textPart =
+    inContext "some text" <|
+        succeed Text
+            |= oneOf
+                [ source (ignore oneOrMore (isNotOneOf [ '{', '}', '#', '\'' ]))
+                , delayedCommit (symbol "'") <|
+                    succeed identity
+                        |= source (ignore oneOrMore (isNotOneOf [ '\'' ]))
+                        |. symbol "'"
+                , delayedCommit (symbol "'") <|
+                    succeed "'"
+                        |. symbol "'"
+                , fail "some text"
+                ]
+
+
+isNotOneOf : List Char -> Char -> Bool
+isNotOneOf chars char =
+    chars |> List.any (\c -> c == char) |> not
+
+
+argumentPart : Parser Part
+argumentPart =
+    inContext "an argument" <|
+        succeed Argument
+            |. symbol "{"
+            |. spaces
+            |= argNameOrNumber
+            |. spaces
+            |= oneOf
+                [ succeed identity
+                    |. symbol ","
+                    |. spaces
+                    |= lazy (\_ -> details)
+                    |. spaces
+                    |. symbol "}"
+                , succeed None
+                    |. spaces
+                    |. symbol "}"
+                ]
+
+
+details : Parser Details
+details =
+    inContext "argument details" <|
+        oneOf
+            [ succeed Simple
+                |= tvpe
+                |= oneOf
+                    [ delayedCommit spaces
+                        (succeed Just
+                            |. symbol ","
+                            |. spaces
+                            |= simpleStyle
+                        )
+                    , succeed Nothing
+                    ]
+                |> map normalizeSimpleArg
+            , succeed Plural
+                |. keyword "plural"
                 |. spaces
-                |= argNameOrNumber
-                |. spaces
-                |= lazy (\_ -> argDetails)
-                |. spaces
-                |. symbol "}"
-        , inContext "some text" <|
-            succeed MessageText
-                |= lazy (\_ -> messageText)
-        ]
-
-
-messageText : Parser String
-messageText =
-    source <|
-        ignore oneOrMore notPatternSyntax
-
-
-notPatternSyntax : Char -> Bool
-notPatternSyntax c =
-    not
-        ((c == '{')
-            || (c == '}')
-        )
-
-
-argDetails : Parser ArgDetails
-argDetails =
-    oneOf
-        [ inContext "the details" <|
-            succeed identity
                 |. symbol ","
                 |. spaces
-                |= oneOf
-                    [ succeed (SimpleArg Number)
-                        |. keyword "number"
-                    , succeed (SimpleArg Date)
-                        |. keyword "date"
-                    , succeed (SimpleArg Time)
-                        |. keyword "time"
-                    , succeed (SimpleArg Spellout)
-                        |. keyword "spellout"
-                    , succeed (SimpleArg Ordinal)
-                        |. keyword "ordinal"
-                    , succeed (SimpleArg Duration)
-                        |. keyword "duration"
-                    , succeed SelectArg
-                        |. keyword "select"
-                        |. spaces
-                        |. symbol ","
-                        |. spaces
-                        |= lazy (\_ -> selectStyle)
-                    , succeed PluralArg
-                        |. keyword "plural"
-                        |. spaces
-                        |. symbol ","
-                        |. spaces
-                        |= lazy (\_ -> pluralStyle)
-                    ]
-        , succeed NoneArg
+                |= lazy (\_ -> pluralStyle)
+            , succeed Selectordinal
+                |. keyword "selectordinal"
+                |. spaces
+                |. symbol ","
+                |. spaces
+                |= lazy (\_ -> pluralStyle)
+            , succeed Select
+                |. keyword "select"
+                |. spaces
+                |. symbol ","
+                |. spaces
+                |= lazy (\_ -> selectStyle)
+            ]
+
+
+tvpe : Parser Type
+tvpe =
+    oneOf
+        [ keyword "number" |> map (always Number)
+        , keyword "date" |> map (always Date)
+        , keyword "time" |> map (always Time)
+        , keyword "spellout" |> map (always Spellout)
+        , keyword "ordinal" |> map (always Ordinal)
+        , keyword "duration" |> map (always Duration)
         ]
+
+
+simpleStyle : Parser SimpleStyle
+simpleStyle =
+    let
+        toArgStyle style =
+            case style of
+                "integer" ->
+                    Integer
+
+                "currency" ->
+                    Currency
+
+                "percent" ->
+                    Percent
+
+                "short" ->
+                    Short
+
+                "medium" ->
+                    Medium
+
+                "long" ->
+                    Long
+
+                "full" ->
+                    Full
+
+                _ ->
+                    Custom style
+    in
+    variable isFirstVarChar isVarChar Set.empty
+        |> map toArgStyle
 
 
 selectStyle : Parser SelectStyle
 selectStyle =
+    let
+        isOther (SelectSelector selectorName _) =
+            case selectorName of
+                "other" ->
+                    True
+
+                _ ->
+                    False
+    in
     repeat oneOrMore (lazy (\_ -> selector))
+        |> andThen
+            (\selectors ->
+                if selectors |> List.any isOther then
+                    succeed (SelectStyle selectors)
+                else
+                    fail "at least an 'other' selector"
+            )
 
 
-selector : Parser Selector
+selector : Parser SelectSelector
 selector =
     inContext "a selector" <|
         delayedCommit spaces <|
-            succeed Selector
+            succeed SelectSelector
                 |= variable isFirstVarChar isVarChar Set.empty
                 |. spaces
-                |= (inContext "a sub-message" <|
-                        succeed identity
-                            |. symbol "{"
-                            |= (lazy (\_ -> messagePart)
-                                    |> andThen
-                                        (\text -> messageHelper [ text ])
-                               )
-                            |. symbol "}"
-                   )
+                |. symbol "{"
+                |= lazy (\_ -> message)
+                |. symbol "}"
                 |. spaces
 
 
@@ -228,7 +300,7 @@ pluralStyle =
                         if pluralSelectors |> List.any isOther then
                             succeed pluralSelectors
                         else
-                            fail "A plural argument needs at least the 'other' selector."
+                            fail "at least an 'other' selector"
                     )
            )
 
@@ -256,10 +328,7 @@ pluralSelector =
             |= (inContext "a sub-message" <|
                     succeed identity
                         |. symbol "{"
-                        |= (lazy (\_ -> messagePart)
-                                |> andThen
-                                    (\text -> messageHelper [ text ])
-                           )
+                        |= lazy (\_ -> message)
                         |. symbol "}"
                )
             |. spaces
@@ -321,15 +390,43 @@ spaces =
 
 
 
+---- PARSER HELPER
+
+
+escapeSymbol : String -> String
+escapeSymbol symbol =
+    case symbol of
+        "\n" ->
+            "\\n"
+
+        "\t" ->
+            "\\t"
+
+        _ ->
+            symbol
+
+
+isFirstVarChar : Char -> Bool
+isFirstVarChar char =
+    Char.isLower char
+        || Char.isUpper char
+        || (char == '_')
+
+
+isVarChar : Char -> Bool
+isVarChar char =
+    Char.isLower char
+        || Char.isUpper char
+        || Char.isDigit char
+        || (char == '_')
+
+
+
 ---- ERROR MESSAGES
 
 
 print : Parser.Error -> Html msg
 print ({ row, col, source, problem, context } as error) =
-    let
-        _ =
-            Debug.log "error" error
-    in
     Html.code
         [ Attributes.style
             [ "font-family" => "'Source Code Pro', Consolas, \"Liberation Mono\", Menlo, Courier, monospace" ]
@@ -383,36 +480,11 @@ printSource row col source problem context =
                     |> List.head
                     |> Maybe.map
                         (\line ->
-                            [ [ Html.text (" " ++ toString y ++ "| ") ]
+                            [ Html.text (" " ++ toString y ++ "| ")
                             , -- TODO: proper multiline coloring
-                              if y == row then
-                                if contextRow < row then
-                                    [ line
-                                        |> String.left (col - contextCol)
-                                        |> blueText
-                                    , line
-                                        |> String.dropLeft (col - 1)
-                                        |> Html.text
-                                    ]
-                                else if contextCol < col then
-                                    [ line
-                                        |> String.left (contextCol - 1)
-                                        |> Html.text
-                                    , line
-                                        |> String.dropLeft (contextCol - 1)
-                                        |> String.left (col - contextCol)
-                                        |> blueText
-                                    , line
-                                        |> String.dropLeft (col - 1)
-                                        |> Html.text
-                                    ]
-                                else
-                                    [ Html.text line ]
-                              else
-                                [ Html.text line ]
-                            , [ Html.text "\n" ]
+                              Html.text line
+                            , Html.text "\n"
                             ]
-                                |> List.concat
                         )
                     |> Maybe.withDefault []
             else
@@ -438,142 +510,139 @@ printSource row col source problem context =
         |> List.concat
 
 
-printProblem : Parser.Problem -> List (Html msg)
-printProblem problem =
+flattenProblem :
+    Parser.Problem
+    ->
+        { keywords : List String
+        , symbols : List String
+        , others : List Parser.Problem
+        }
+flattenProblem problem =
+    flattenProblemHelper problem
+        { keywords = []
+        , symbols = []
+        , others = []
+        }
+        |> (\collected ->
+                { collected
+                    | keywords = List.unique collected.keywords
+                    , symbols = List.unique collected.symbols
+                }
+           )
+
+
+flattenProblemHelper :
+    Parser.Problem
+    ->
+        { keywords : List String
+        , symbols : List String
+        , others : List Parser.Problem
+        }
+    ->
+        { keywords : List String
+        , symbols : List String
+        , others : List Parser.Problem
+        }
+flattenProblemHelper problem collected =
     case problem of
+        ExpectingKeyword keyword ->
+            { collected | keywords = keyword :: collected.keywords }
+
+        ExpectingSymbol symbol ->
+            { collected | symbols = symbol :: collected.symbols }
+
         BadOneOf problems ->
-            let
-                keywords problems =
-                    problems
-                        |> List.foldl isKeywordProblem []
-
-                isKeywordProblem next collected =
-                    case next of
-                        ExpectingKeyword keyword ->
-                            keyword :: collected
-
-                        BadOneOf problems ->
-                            keywords problems ++ collected
-
-                        _ ->
-                            collected
-
-                symbols problems =
-                    problems
-                        |> List.foldl isSymbolProblem []
-
-                isSymbolProblem next collected =
-                    case next of
-                        ExpectingSymbol symbol ->
-                            symbol :: collected
-
-                        BadOneOf problems ->
-                            symbols problems ++ collected
-
-                        _ ->
-                            collected
-            in
-            case
-                ( keywords problems |> List.isEmpty
-                , symbols problems |> List.isEmpty
-                )
-            of
-                ( True, True ) ->
-                    [ [ Html.text "I expected " ]
-                    , problems
-                        |> List.map printSingleProblem
-                        |> List.concat
-                        |> List.intersperse (Html.text " or ")
-                    , [ Html.text "." ]
-                    ]
-                        |> List.concat
-
-                ( False, True ) ->
-                    [ [ Html.text "I expected one of the following keywords:\n\n" ]
-                    , keywords problems
-                        |> List.map
-                            (\keyword ->
-                                [ Html.text "  "
-                                , greenText keyword
-                                ]
-                            )
-                        |> List.intersperse [ Html.text ",\n" ]
-                        |> List.concat
-                    , [ Html.text "." ]
-                    ]
-                        |> List.concat
-
-                ( True, False ) ->
-                    [ [ Html.text "I expected one of the following symbols:\n\n" ]
-                    , symbols problems
-                        |> List.map
-                            (\symbol ->
-                                [ Html.text "  "
-                                , Html.text "'"
-                                , greenText <|
-                                    escapeSymbol symbol
-                                , Html.text "'"
-                                ]
-                            )
-                        |> List.intersperse [ Html.text ",\n" ]
-                        |> List.concat
-                    , [ Html.text "." ]
-                    ]
-                        |> List.concat
-
-                ( False, False ) ->
-                    [ [ Html.text "I expected one of the following keywords:\n\n" ]
-                    , keywords problems
-                        |> List.map
-                            (\keyword ->
-                                [ Html.text "  "
-                                , greenText keyword
-                                ]
-                            )
-                        |> List.intersperse [ Html.text ",\n" ]
-                        |> List.concat
-                    , [ Html.text ",\n\nor one of the following symbols:\n\n" ]
-                    , symbols problems
-                        |> List.map
-                            (\symbol ->
-                                [ Html.text "  "
-                                , Html.text "'"
-                                , greenText <|
-                                    escapeSymbol symbol
-                                , Html.text "'"
-                                ]
-                            )
-                        |> List.intersperse [ Html.text ",\n" ]
-                        |> List.concat
-                    , [ Html.text "." ]
-                    ]
-                        |> List.concat
-
-        Fail message ->
-            [ Html.text message ]
+            problems
+                |> List.foldl flattenProblemHelper collected
 
         _ ->
-            [ [ Html.text "I expected " ]
-            , printSingleProblem problem
-            , [ Html.text "." ]
+            { collected | others = problem :: collected.others }
+
+
+printKeywords : List String -> Maybe (List (Html msg))
+printKeywords keywords =
+    case keywords of
+        [] ->
+            Nothing
+
+        _ ->
+            [ [ Html.text "one of the following keywords:\n\n" ]
+            , keywords
+                |> List.map
+                    (\keyword ->
+                        [ Html.text "  "
+                        , greenText keyword
+                        ]
+                    )
+                |> List.intersperse [ Html.text ",\n" ]
+                |> List.concat
             ]
                 |> List.concat
+                |> Just
+
+
+printSymbols : List String -> Maybe (List (Html msg))
+printSymbols symbols =
+    case symbols of
+        [] ->
+            Nothing
+
+        _ ->
+            [ [ Html.text "one of the following symbols:\n\n  " ]
+            , symbols
+                |> List.map
+                    (\symbol ->
+                        [ Html.text "'"
+                        , greenText symbol
+                        , Html.text "'"
+                        ]
+                    )
+                |> List.intersperse [ Html.text ",  " ]
+                |> List.concat
+            ]
+                |> List.concat
+                |> Just
+
+
+printProblem : Parser.Problem -> List (Html msg)
+printProblem problem =
+    let
+        { keywords, symbols, others } =
+            flattenProblem problem
+    in
+    [ [ Html.text "I expected " ]
+    , [ printKeywords keywords
+      , printSymbols symbols
+      , case others of
+            [] ->
+                Nothing
+
+            _ ->
+                others
+                    |> List.map printSingleProblem
+                    |> List.concat
+                    |> List.intersperse (Html.text " or ")
+                    |> Just
+      ]
+        |> List.filterMap identity
+        |> List.intersperse [ Html.text ",\n\nor " ]
+        |> List.concat
+    , [ Html.text "." ]
+    ]
+        |> List.concat
 
 
 printSingleProblem : Parser.Problem -> List (Html msg)
 printSingleProblem problem =
     case problem of
         BadOneOf problems ->
-            problems
-                |> List.map printSingleProblem
-                |> List.concat
-                |> List.intersperse (Html.text " or ")
+            []
 
         BadInt ->
             [ greenText "a number" ]
 
         BadRepeat ->
-            [ Html.text "some characters" ]
+            []
 
         ExpectingSymbol symbol ->
             [ Html.text "the symbol '"
@@ -589,55 +658,17 @@ printSingleProblem problem =
             ]
 
         ExpectingVariable ->
-            [ greenText "a selector" ]
+            [ greenText "a variable" ]
 
         Fail message ->
-            [ Html.text message ]
+            [ greenText message ]
 
         _ ->
             [ Html.text <| toString problem ]
 
 
 
----- HELPER
-
-
-escapeSymbol : String -> String
-escapeSymbol symbol =
-    case symbol of
-        "\n" ->
-            "\\n"
-
-        "\t" ->
-            "\\t"
-
-        _ ->
-            symbol
-
-
-isLetter : Char -> Bool
-isLetter c =
-    Char.isLower c || Char.isUpper c
-
-
-isFirstVarChar : Char -> Bool
-isFirstVarChar char =
-    Char.isLower char
-        || Char.isUpper char
-        || (char == '_')
-
-
-isVarChar : Char -> Bool
-isVarChar char =
-    Char.isLower char
-        || Char.isUpper char
-        || Char.isDigit char
-        || (char == '_')
-
-
-(=>) : a -> b -> ( a, b )
-(=>) =
-    (,)
+---- VIEW HELPER
 
 
 redText text =
@@ -670,3 +701,106 @@ green =
 
 blue =
     "#3465a4"
+
+
+
+---- HELPER
+
+
+normalizeSimpleArg : Details -> Details
+normalizeSimpleArg argDetails =
+    case argDetails of
+        Simple argType (Just argStyle) ->
+            case argType of
+                Number ->
+                    case argStyle of
+                        Integer ->
+                            argDetails
+
+                        Currency ->
+                            argDetails
+
+                        Percent ->
+                            argDetails
+
+                        _ ->
+                            Simple argType (Just (Custom (printStyle argStyle)))
+
+                Date ->
+                    case argStyle of
+                        Short ->
+                            argDetails
+
+                        Medium ->
+                            argDetails
+
+                        Long ->
+                            argDetails
+
+                        Full ->
+                            argDetails
+
+                        _ ->
+                            Simple argType (Just (Custom (printStyle argStyle)))
+
+                Time ->
+                    case argStyle of
+                        Short ->
+                            argDetails
+
+                        Medium ->
+                            argDetails
+
+                        Long ->
+                            argDetails
+
+                        Full ->
+                            argDetails
+
+                        _ ->
+                            Simple argType (Just (Custom (printStyle argStyle)))
+
+                Spellout ->
+                    Simple argType (Just (Custom (printStyle argStyle)))
+
+                Ordinal ->
+                    Simple argType (Just (Custom (printStyle argStyle)))
+
+                Duration ->
+                    Simple argType (Just (Custom (printStyle argStyle)))
+
+        _ ->
+            argDetails
+
+
+printStyle : SimpleStyle -> String
+printStyle argStyle =
+    case argStyle of
+        Integer ->
+            "integer"
+
+        Currency ->
+            "currency"
+
+        Percent ->
+            "percent"
+
+        Short ->
+            "short"
+
+        Medium ->
+            "medium"
+
+        Long ->
+            "long"
+
+        Full ->
+            "full"
+
+        Custom style ->
+            style
+
+
+(=>) : a -> b -> ( a, b )
+(=>) =
+    (,)
