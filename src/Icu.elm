@@ -22,6 +22,7 @@ type Part
 type ArgNameOrNumber
     = ArgName String
     | ArgNumber Int
+    | ArgHash
 
 
 type Details
@@ -88,13 +89,16 @@ parse text =
 
 
 icu =
-    message
+    message True
 
 
-message =
+message : Bool -> Parser Message
+message allowHash =
     oneOf
-        [ textPart
+        [ textPart allowHash
         , lazy (\_ -> argumentPart)
+        , succeed (Argument ArgHash None)
+            |. symbol "#"
         ]
         |> repeat oneOrMore
         |> map joinTextParts
@@ -114,12 +118,19 @@ joinTextParts parts =
             first :: joinTextParts rest
 
 
-textPart : Parser Part
-textPart =
+textPart : Bool -> Parser Part
+textPart allowHash =
+    let
+        forbiddenSymbols =
+            if allowHash then
+                [ '{', '}', '\'' ]
+            else
+                [ '{', '}', '#', '\'' ]
+    in
     inContext "some text" <|
         succeed Text
             |= oneOf
-                [ source (ignore oneOrMore (isNotOneOf [ '{', '}', '#', '\'' ]))
+                [ source (ignore oneOrMore (isNotOneOf forbiddenSymbols))
                 , delayedCommit (symbol "'") <|
                     succeed identity
                         |= source (ignore oneOrMore (isNotOneOf [ '\'' ]))
@@ -268,7 +279,7 @@ selector =
                 |= variable isFirstVarChar isVarChar Set.empty
                 |. spaces
                 |. symbol "{"
-                |= lazy (\_ -> message)
+                |= lazy (\_ -> message True)
                 |. symbol "}"
                 |. spaces
 
@@ -328,7 +339,7 @@ pluralSelector =
             |= (inContext "a sub-message" <|
                     succeed identity
                         |. symbol "{"
-                        |= lazy (\_ -> message)
+                        |= lazy (\_ -> message False)
                         |. symbol "}"
                )
             |. spaces
