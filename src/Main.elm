@@ -25,6 +25,7 @@ main =
 type alias Model =
     { text : String
     , namedNumberValues : Dict String Int
+    , namedSelectValues : Dict String String
     , namedTextValues : Dict String String
     }
 
@@ -33,6 +34,7 @@ model : Model
 model =
     { text = "You {NUM_ADDS, plural,\n offset:1\n =0{did not add this}\n =1{added this}\n one{and one other person added this}\n other{and # others added this}\n}"
     , namedNumberValues = Dict.empty
+    , namedSelectValues = Dict.empty
     , namedTextValues = Dict.empty
     }
 
@@ -40,6 +42,7 @@ model =
 type Msg
     = UpdateText String
     | UpdateNamedNumberValue String String
+    | UpdateNamedSelectValue String String
     | UpdateNamedTextValue String String
 
 
@@ -56,6 +59,9 @@ update msg model =
 
                 Err _ ->
                     model
+
+        UpdateNamedSelectValue name value ->
+            { model | namedSelectValues = Dict.insert name value model.namedSelectValues }
 
         UpdateNamedTextValue name value ->
             case value of
@@ -123,12 +129,27 @@ view model =
                                     , "margin" => "5px"
                                     ]
                                 ]
+                        , data
+                            |> Icu.namedSelectArguments
+                            |> Dict.toList
+                            |> List.map
+                                (\( name, values ) ->
+                                    Icu.viewSelectArgumentInput UpdateNamedSelectValue name values
+                                )
+                            |> Html.div
+                                [ Attributes.style
+                                    [ "display" => "flex"
+                                    , "flex-flow" => "column"
+                                    , "margin" => "5px"
+                                    ]
+                                ]
                         , Html.code
                             [ Attributes.style
                                 [ "font-family" => "'Source Code Pro', Consolas, \"Liberation Mono\", Menlo, Courier, monospace" ]
                             ]
                             [ Icu.evaluate
                                 { namedText = model.namedTextValues
+                                , namedSelect = model.namedSelectValues
                                 , namedNumber = model.namedNumberValues
                                 }
                                 data

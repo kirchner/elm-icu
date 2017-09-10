@@ -3,10 +3,12 @@ module Icu
         ( Message
         , evaluate
         , namedNumberArguments
+        , namedSelectArguments
         , namedTextArguments
         , parse
         , print
         , viewNumberArgumentInput
+        , viewSelectArgumentInput
         , viewTextArgumentInput
         )
 
@@ -138,6 +140,46 @@ namedNumberArgumentsFromPart part =
             Set.empty
 
 
+namedSelectArguments : Message -> Dict String (Set String)
+namedSelectArguments message =
+    message
+        |> List.map namedSelectArgumentsFromPart
+        |> List.foldl Dict.union Dict.empty
+
+
+namedSelectArgumentsFromPart : Part -> Dict String (Set String)
+namedSelectArgumentsFromPart part =
+    case part of
+        Argument (ArgName name) details ->
+            case details of
+                Plural (PluralStyle _ pluralSelectors) ->
+                    pluralSelectors
+                        |> List.map (\(PluralSelector _ message) -> message |> namedSelectArguments)
+                        |> List.foldl Dict.union Dict.empty
+
+                Select (SelectStyle selectSelectors) ->
+                    let
+                        selectArgument =
+                            selectSelectors
+                                |> List.map (\(SelectSelector selector _) -> selector)
+                                |> Set.fromList
+                    in
+                    selectSelectors
+                        |> List.map (\(SelectSelector _ message) -> message |> namedSelectArguments)
+                        |> List.foldl Dict.union (Dict.singleton name selectArgument)
+
+                Selectordinal (PluralStyle _ pluralSelectors) ->
+                    pluralSelectors
+                        |> List.map (\(PluralSelector _ message) -> message |> namedSelectArguments)
+                        |> List.foldl Dict.union Dict.empty
+
+                _ ->
+                    Dict.empty
+
+        _ ->
+            Dict.empty
+
+
 namedTextArguments : Message -> Set String
 namedTextArguments message =
     message
@@ -170,7 +212,7 @@ namedTextArgumentsFromPart part =
                 Select (SelectStyle selectSelectors) ->
                     selectSelectors
                         |> List.map (\(SelectSelector _ message) -> message |> namedTextArguments)
-                        |> List.foldl Set.union (Set.singleton name)
+                        |> List.foldl Set.union Set.empty
 
                 Selectordinal (PluralStyle _ pluralSelectors) ->
                     pluralSelectors
@@ -186,7 +228,7 @@ namedTextArgumentsFromPart part =
 
 viewNumberArgumentInput : (String -> String -> msg) -> String -> Html msg
 viewNumberArgumentInput updateNumberValue name =
-    Html.div [] <|
+    Html.div []
         [ Html.text name
         , Html.input
             [ Events.onInput (updateNumberValue name) ]
@@ -194,9 +236,27 @@ viewNumberArgumentInput updateNumberValue name =
         ]
 
 
+viewSelectArgumentInput : (String -> String -> msg) -> String -> Set String -> Html msg
+viewSelectArgumentInput updateSelectValue name values =
+    let
+        viewOption value =
+            Html.option
+                [ Attributes.value value ]
+                [ Html.text value ]
+    in
+    Html.div []
+        [ Html.text name
+        , values
+            |> Set.toList
+            |> List.map viewOption
+            |> Html.select
+                [ Events.onInput (updateSelectValue name) ]
+        ]
+
+
 viewTextArgumentInput : (String -> String -> msg) -> String -> Html msg
 viewTextArgumentInput updateValue name =
-    Html.div [] <|
+    Html.div []
         [ Html.text name
         , Html.input
             [ Events.onInput (updateValue name) ]
@@ -210,6 +270,7 @@ viewTextArgumentInput updateValue name =
 
 type alias Values =
     { namedNumber : Dict String Int
+    , namedSelect : Dict String String
     , namedText : Dict String String
     }
 
@@ -251,7 +312,7 @@ evaluatePart values maybeHash part =
                                     "{" ++ name ++ "}"
 
                         Select (SelectStyle selectSelectors) ->
-                            case Dict.get name values.namedText of
+                            case Dict.get name values.namedSelect of
                                 Just value ->
                                     evaluateSelectSelectors values
                                         value
