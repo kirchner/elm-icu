@@ -250,8 +250,15 @@ evaluatePart values maybeHash part =
                                 Nothing ->
                                     "{" ++ name ++ "}"
 
-                        Select selectStyle ->
-                            "{TODO}"
+                        Select (SelectStyle selectSelectors) ->
+                            case Dict.get name values.namedText of
+                                Just value ->
+                                    evaluateSelectSelectors values
+                                        value
+                                        selectSelectors
+
+                                Nothing ->
+                                    "{" ++ name ++ "}"
 
                         Selectordinal (PluralStyle maybeOffset pluralSelectors) ->
                             case Dict.get name values.namedNumber of
@@ -329,6 +336,26 @@ evaluatePluralSelectors values maybeOffset value pluralSelectors =
 
                     Other ->
                         Just (evaluateMessage message)
+            )
+        |> List.head
+        |> Maybe.withDefault "{missingValue}"
+
+
+evaluateSelectSelectors : Values -> String -> List SelectSelector -> String
+evaluateSelectSelectors values value selectSelectors =
+    let
+        evaluateMessage message =
+            message
+                |> List.map (evaluatePart values Nothing)
+                |> String.concat
+    in
+    selectSelectors
+        |> List.filterMap
+            (\(SelectSelector v message) ->
+                if v == value then
+                    Just (evaluateMessage message)
+                else
+                    Nothing
             )
         |> List.head
         |> Maybe.withDefault "{missingValue}"
