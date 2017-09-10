@@ -17,12 +17,12 @@ type alias Message =
 type Part
     = Text String
     | Argument ArgNameOrNumber Details
+    | Hash
 
 
 type ArgNameOrNumber
     = ArgName String
     | ArgNumber Int
-    | ArgHash
 
 
 type Details
@@ -97,7 +97,7 @@ message allowHash =
     oneOf
         [ textPart allowHash
         , lazy (\_ -> argumentPart)
-        , succeed (Argument ArgHash None)
+        , succeed Hash
             |. symbol "#"
         ]
         |> repeat oneOrMore
