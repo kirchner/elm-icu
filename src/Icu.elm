@@ -1,12 +1,24 @@
-module Icu exposing (Message, parse, print)
+module Icu
+    exposing
+        ( Message
+        , evaluate
+        , namedNumberArguments
+        , namedTextArguments
+        , parse
+        , print
+        , viewNumberArgumentInput
+        , viewTextArgumentInput
+        )
 
 import Char
+import Dict exposing (Dict)
 import Html exposing (Html)
 import Html.Attributes as Attributes
+import Html.Events as Events
 import List.Extra as List
 import Parser exposing (..)
 import Parser.LanguageKit exposing (..)
-import Set
+import Set exposing (Set)
 import String.Extra as String
 
 
@@ -79,13 +91,256 @@ type SelectorName
     | Other
 
 
-parse : String -> Result Parser.Error Message
-parse text =
-    Parser.run icu text
+
+---- ARGUMENT RETRIEVAL
+
+
+namedNumberArguments : Message -> Set String
+namedNumberArguments message =
+    message
+        |> List.map namedNumberArgumentsFromPart
+        |> List.foldl Set.union Set.empty
+
+
+namedNumberArgumentsFromPart : Part -> Set String
+namedNumberArgumentsFromPart part =
+    case part of
+        Argument (ArgName name) details ->
+            case details of
+                Simple Number _ ->
+                    Set.singleton name
+
+                Simple Ordinal _ ->
+                    Set.singleton name
+
+                Simple Duration _ ->
+                    Set.singleton name
+
+                Plural (PluralStyle _ pluralSelectors) ->
+                    pluralSelectors
+                        |> List.map (\(PluralSelector _ message) -> message |> namedNumberArguments)
+                        |> List.foldl Set.union (Set.singleton name)
+
+                Select (SelectStyle selectSelectors) ->
+                    selectSelectors
+                        |> List.map (\(SelectSelector _ message) -> message |> namedNumberArguments)
+                        |> List.foldl Set.union Set.empty
+
+                Selectordinal (PluralStyle _ pluralSelectors) ->
+                    pluralSelectors
+                        |> List.map (\(PluralSelector _ message) -> message |> namedNumberArguments)
+                        |> List.foldl Set.union (Set.singleton name)
+
+                _ ->
+                    Set.empty
+
+        _ ->
+            Set.empty
+
+
+namedTextArguments : Message -> Set String
+namedTextArguments message =
+    message
+        |> List.map namedTextArgumentsFromPart
+        |> List.foldl Set.union Set.empty
+
+
+namedTextArgumentsFromPart : Part -> Set String
+namedTextArgumentsFromPart part =
+    case part of
+        Argument (ArgName name) details ->
+            case details of
+                None ->
+                    Set.singleton name
+
+                Simple Date _ ->
+                    Set.singleton name
+
+                Simple Time _ ->
+                    Set.singleton name
+
+                Simple Spellout _ ->
+                    Set.singleton name
+
+                Plural (PluralStyle _ pluralSelectors) ->
+                    pluralSelectors
+                        |> List.map (\(PluralSelector _ message) -> message |> namedTextArguments)
+                        |> List.foldl Set.union Set.empty
+
+                Select (SelectStyle selectSelectors) ->
+                    selectSelectors
+                        |> List.map (\(SelectSelector _ message) -> message |> namedTextArguments)
+                        |> List.foldl Set.union (Set.singleton name)
+
+                Selectordinal (PluralStyle _ pluralSelectors) ->
+                    pluralSelectors
+                        |> List.map (\(PluralSelector _ message) -> message |> namedTextArguments)
+                        |> List.foldl Set.union Set.empty
+
+                _ ->
+                    Set.empty
+
+        _ ->
+            Set.empty
+
+
+viewNumberArgumentInput : (String -> String -> msg) -> String -> Html msg
+viewNumberArgumentInput updateNumberValue name =
+    Html.div [] <|
+        [ Html.text name
+        , Html.input
+            [ Events.onInput (updateNumberValue name) ]
+            []
+        ]
+
+
+viewTextArgumentInput : (String -> String -> msg) -> String -> Html msg
+viewTextArgumentInput updateValue name =
+    Html.div [] <|
+        [ Html.text name
+        , Html.input
+            [ Events.onInput (updateValue name) ]
+            []
+        ]
+
+
+
+---- EVALUATER
+
+
+type alias Values =
+    { namedNumber : Dict String Int
+    , namedText : Dict String String
+    }
+
+
+evaluate : Values -> Message -> String
+evaluate values message =
+    message
+        |> List.map (evaluatePart values Nothing)
+        |> String.concat
+
+
+evaluatePart : Values -> Maybe Int -> Part -> String
+evaluatePart values maybeHash part =
+    case part of
+        Text text ->
+            text
+
+        Argument nameOrNumber details ->
+            case nameOrNumber of
+                ArgName name ->
+                    case details of
+                        None ->
+                            Dict.get name values.namedText
+                                |> Maybe.withDefault ("{" ++ name ++ "}")
+
+                        Simple tvpe maybeStyle ->
+                            "{TODO}"
+
+                        Plural (PluralStyle maybeOffset pluralSelectors) ->
+                            case Dict.get name values.namedNumber of
+                                Just value ->
+                                    evaluatePluralSelectors
+                                        values
+                                        maybeOffset
+                                        value
+                                        pluralSelectors
+
+                                Nothing ->
+                                    "{" ++ name ++ "}"
+
+                        Select selectStyle ->
+                            "{TODO}"
+
+                        Selectordinal (PluralStyle maybeOffset pluralSelectors) ->
+                            case Dict.get name values.namedNumber of
+                                Just value ->
+                                    evaluatePluralSelectors
+                                        values
+                                        maybeOffset
+                                        value
+                                        pluralSelectors
+
+                                Nothing ->
+                                    "{" ++ name ++ "}"
+
+                ArgNumber num ->
+                    "TODO"
+
+        Hash ->
+            maybeHash
+                |> Maybe.map toString
+                |> Maybe.withDefault "#"
+
+
+evaluatePluralSelectors : Values -> Maybe Int -> Int -> List PluralSelector -> String
+evaluatePluralSelectors values maybeOffset value pluralSelectors =
+    let
+        printedValue =
+            maybeOffset
+                |> Maybe.map ((-) value)
+                |> Maybe.withDefault value
+
+        evaluateMessage message =
+            message
+                |> List.map (evaluatePart values (Just printedValue))
+                |> String.concat
+    in
+    pluralSelectors
+        |> List.filterMap
+            (\(PluralSelector name message) ->
+                case name of
+                    ExplicitValue v ->
+                        if v == value then
+                            Just (evaluateMessage message)
+                        else
+                            Nothing
+
+                    Zero ->
+                        if value == 0 then
+                            Just (evaluateMessage message)
+                        else
+                            Nothing
+
+                    One ->
+                        if value == 1 then
+                            Just (evaluateMessage message)
+                        else
+                            Nothing
+
+                    Two ->
+                        if value == 2 then
+                            Just (evaluateMessage message)
+                        else
+                            Nothing
+
+                    Few ->
+                        if value <= 12 then
+                            Just (evaluateMessage message)
+                        else
+                            Nothing
+
+                    Many ->
+                        if value > 12 then
+                            Just (evaluateMessage message)
+                        else
+                            Nothing
+
+                    Other ->
+                        Just (evaluateMessage message)
+            )
+        |> List.head
+        |> Maybe.withDefault "{missingValue}"
 
 
 
 ---- PARSER
+
+
+parse : String -> Result Parser.Error Message
+parse text =
+    Parser.run icu text
 
 
 icu =
@@ -433,7 +688,7 @@ isVarChar char =
 
 
 
----- ERROR MESSAGES
+---- PARSER ERROR MESSAGES
 
 
 print : Parser.Error -> Html msg
