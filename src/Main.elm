@@ -24,26 +24,49 @@ main =
 
 type alias Model =
     { text : String
-    , namedNumberValues : Dict String Int
-    , namedSelectValues : Dict String String
-    , namedTextValues : Dict String String
+    , numberValues : Dict String Int
+    , selectValues : Dict String String
+    , textValues : Dict String String
     }
 
 
 model : Model
 model =
-    { text = "You {NUM_ADDS, plural,\n offset:1\n =0{did not add this}\n =1{added this}\n one{and one other person added this}\n other{and # others added this}\n}"
-    , namedNumberValues = Dict.empty
-    , namedSelectValues = Dict.empty
-    , namedTextValues = Dict.empty
+    { text =
+        """
+{gender_of_host, select,
+  female {
+    {num_guests, plural, offset:1
+      =0 {{host} does not give a party.}
+      =1 {{host} invites {guest} to her party.}
+      =2 {{host} invites {guest} and one other person to her party.}
+      other {{host} invites {guest} and # other people to her party.}}}
+  male {
+    {num_guests, plural, offset:1
+      =0 {{host} does not give a party.}
+      =1 {{host} invites {guest} to his party.}
+      =2 {{host} invites {guest} and one other person to his party.}
+      other {{host} invites {guest} and # other people to his party.}}}
+  other {
+    {num_guests, plural, offset:1
+      =0 {{host} does not give a party.}
+      =1 {{host} invites {guest} to their party.}
+      =2 {{host} invites {guest} and one other person to their party.}
+      other {{host} invites {guest} and # other people to their party.}}}}
+        """
+
+    -- text = "You {NUM_ADDS, plural,\n offset:1\n =0{did not add this}\n =1{added this}\n one{and one other person added this}\n other{and # others added this}\n}"
+    , numberValues = Dict.empty
+    , selectValues = Dict.empty
+    , textValues = Dict.empty
     }
 
 
 type Msg
     = UpdateText String
-    | UpdateNamedNumberValue String String
-    | UpdateNamedSelectValue String String
-    | UpdateNamedTextValue String String
+    | UpdateNumberValue String String
+    | UpdateSelectValue String String
+    | UpdateTextValue String String
 
 
 update : Msg -> Model -> Model
@@ -52,24 +75,24 @@ update msg model =
         UpdateText newText ->
             { model | text = newText }
 
-        UpdateNamedNumberValue name value ->
+        UpdateNumberValue name value ->
             case String.toInt value of
                 Ok int ->
-                    { model | namedNumberValues = Dict.insert name int model.namedNumberValues }
+                    { model | numberValues = Dict.insert name int model.numberValues }
 
                 Err _ ->
                     model
 
-        UpdateNamedSelectValue name value ->
-            { model | namedSelectValues = Dict.insert name value model.namedSelectValues }
+        UpdateSelectValue name value ->
+            { model | selectValues = Dict.insert name value model.selectValues }
 
-        UpdateNamedTextValue name value ->
+        UpdateTextValue name value ->
             case value of
                 "" ->
-                    { model | namedTextValues = Dict.remove name model.namedTextValues }
+                    { model | textValues = Dict.remove name model.textValues }
 
                 _ ->
-                    { model | namedTextValues = Dict.insert name value model.namedTextValues }
+                    { model | textValues = Dict.insert name value model.textValues }
 
 
 view : Model -> Html Msg
@@ -108,9 +131,9 @@ view model =
                     Html.div
                         []
                         [ data
-                            |> Icu.namedTextArguments
+                            |> Icu.textArguments
                             |> Set.toList
-                            |> List.map (Icu.viewTextArgumentInput UpdateNamedTextValue)
+                            |> List.map (Icu.viewTextArgumentInput UpdateTextValue)
                             |> Html.div
                                 [ Attributes.style
                                     [ "display" => "flex"
@@ -119,9 +142,9 @@ view model =
                                     ]
                                 ]
                         , data
-                            |> Icu.namedNumberArguments
+                            |> Icu.numberArguments
                             |> Set.toList
-                            |> List.map (Icu.viewNumberArgumentInput UpdateNamedNumberValue)
+                            |> List.map (Icu.viewNumberArgumentInput UpdateNumberValue)
                             |> Html.div
                                 [ Attributes.style
                                     [ "display" => "flex"
@@ -130,11 +153,11 @@ view model =
                                     ]
                                 ]
                         , data
-                            |> Icu.namedSelectArguments
+                            |> Icu.selectArguments
                             |> Dict.toList
                             |> List.map
                                 (\( name, values ) ->
-                                    Icu.viewSelectArgumentInput UpdateNamedSelectValue name values
+                                    Icu.viewSelectArgumentInput UpdateSelectValue name values
                                 )
                             |> Html.div
                                 [ Attributes.style
@@ -148,19 +171,12 @@ view model =
                                 [ "font-family" => "'Source Code Pro', Consolas, \"Liberation Mono\", Menlo, Courier, monospace" ]
                             ]
                             [ Icu.evaluate
-                                { namedText = model.namedTextValues
-                                , namedSelect = model.namedSelectValues
-                                , namedNumber = model.namedNumberValues
+                                { text = model.textValues
+                                , select = model.selectValues
+                                , number = model.numberValues
                                 }
                                 data
                                 |> Html.text
-                            , Html.text "\n\n"
-                            , Html.text <|
-                                (data
-                                    |> List.map toString
-                                    |> List.map (String.softWrap 70)
-                                    |> String.join "\n"
-                                )
                             ]
                         ]
 

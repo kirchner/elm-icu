@@ -2,11 +2,11 @@ module Icu
     exposing
         ( Message
         , evaluate
-        , namedNumberArguments
-        , namedSelectArguments
-        , namedTextArguments
+        , numberArguments
         , parse
         , print
+        , selectArguments
+        , textArguments
         , viewNumberArgumentInput
         , viewSelectArgumentInput
         , viewTextArgumentInput
@@ -30,13 +30,8 @@ type alias Message =
 
 type Part
     = Text String
-    | Argument ArgNameOrNumber Details
+    | Argument String Details
     | Hash
-
-
-type ArgNameOrNumber
-    = ArgName String
-    | ArgNumber Int
 
 
 type Details
@@ -97,17 +92,17 @@ type SelectorName
 ---- ARGUMENT RETRIEVAL
 
 
-namedNumberArguments : Message -> Set String
-namedNumberArguments message =
+numberArguments : Message -> Set String
+numberArguments message =
     message
-        |> List.map namedNumberArgumentsFromPart
+        |> List.map numberArgumentsFromPart
         |> List.foldl Set.union Set.empty
 
 
-namedNumberArgumentsFromPart : Part -> Set String
-namedNumberArgumentsFromPart part =
+numberArgumentsFromPart : Part -> Set String
+numberArgumentsFromPart part =
     case part of
-        Argument (ArgName name) details ->
+        Argument name details ->
             case details of
                 Simple Number _ ->
                     Set.singleton name
@@ -120,17 +115,17 @@ namedNumberArgumentsFromPart part =
 
                 Plural (PluralStyle _ pluralSelectors) ->
                     pluralSelectors
-                        |> List.map (\(PluralSelector _ message) -> message |> namedNumberArguments)
+                        |> List.map (\(PluralSelector _ message) -> message |> numberArguments)
                         |> List.foldl Set.union (Set.singleton name)
 
                 Select (SelectStyle selectSelectors) ->
                     selectSelectors
-                        |> List.map (\(SelectSelector _ message) -> message |> namedNumberArguments)
+                        |> List.map (\(SelectSelector _ message) -> message |> numberArguments)
                         |> List.foldl Set.union Set.empty
 
                 Selectordinal (PluralStyle _ pluralSelectors) ->
                     pluralSelectors
-                        |> List.map (\(PluralSelector _ message) -> message |> namedNumberArguments)
+                        |> List.map (\(PluralSelector _ message) -> message |> numberArguments)
                         |> List.foldl Set.union (Set.singleton name)
 
                 _ ->
@@ -140,21 +135,21 @@ namedNumberArgumentsFromPart part =
             Set.empty
 
 
-namedSelectArguments : Message -> Dict String (Set String)
-namedSelectArguments message =
+selectArguments : Message -> Dict String (Set String)
+selectArguments message =
     message
-        |> List.map namedSelectArgumentsFromPart
+        |> List.map selectArgumentsFromPart
         |> List.foldl Dict.union Dict.empty
 
 
-namedSelectArgumentsFromPart : Part -> Dict String (Set String)
-namedSelectArgumentsFromPart part =
+selectArgumentsFromPart : Part -> Dict String (Set String)
+selectArgumentsFromPart part =
     case part of
-        Argument (ArgName name) details ->
+        Argument name details ->
             case details of
                 Plural (PluralStyle _ pluralSelectors) ->
                     pluralSelectors
-                        |> List.map (\(PluralSelector _ message) -> message |> namedSelectArguments)
+                        |> List.map (\(PluralSelector _ message) -> message |> selectArguments)
                         |> List.foldl Dict.union Dict.empty
 
                 Select (SelectStyle selectSelectors) ->
@@ -165,12 +160,12 @@ namedSelectArgumentsFromPart part =
                                 |> Set.fromList
                     in
                     selectSelectors
-                        |> List.map (\(SelectSelector _ message) -> message |> namedSelectArguments)
+                        |> List.map (\(SelectSelector _ message) -> message |> selectArguments)
                         |> List.foldl Dict.union (Dict.singleton name selectArgument)
 
                 Selectordinal (PluralStyle _ pluralSelectors) ->
                     pluralSelectors
-                        |> List.map (\(PluralSelector _ message) -> message |> namedSelectArguments)
+                        |> List.map (\(PluralSelector _ message) -> message |> selectArguments)
                         |> List.foldl Dict.union Dict.empty
 
                 _ ->
@@ -180,17 +175,17 @@ namedSelectArgumentsFromPart part =
             Dict.empty
 
 
-namedTextArguments : Message -> Set String
-namedTextArguments message =
+textArguments : Message -> Set String
+textArguments message =
     message
-        |> List.map namedTextArgumentsFromPart
+        |> List.map textArgumentsFromPart
         |> List.foldl Set.union Set.empty
 
 
-namedTextArgumentsFromPart : Part -> Set String
-namedTextArgumentsFromPart part =
+textArgumentsFromPart : Part -> Set String
+textArgumentsFromPart part =
     case part of
-        Argument (ArgName name) details ->
+        Argument name details ->
             case details of
                 None ->
                     Set.singleton name
@@ -206,17 +201,17 @@ namedTextArgumentsFromPart part =
 
                 Plural (PluralStyle _ pluralSelectors) ->
                     pluralSelectors
-                        |> List.map (\(PluralSelector _ message) -> message |> namedTextArguments)
+                        |> List.map (\(PluralSelector _ message) -> message |> textArguments)
                         |> List.foldl Set.union Set.empty
 
                 Select (SelectStyle selectSelectors) ->
                     selectSelectors
-                        |> List.map (\(SelectSelector _ message) -> message |> namedTextArguments)
+                        |> List.map (\(SelectSelector _ message) -> message |> textArguments)
                         |> List.foldl Set.union Set.empty
 
                 Selectordinal (PluralStyle _ pluralSelectors) ->
                     pluralSelectors
-                        |> List.map (\(PluralSelector _ message) -> message |> namedTextArguments)
+                        |> List.map (\(PluralSelector _ message) -> message |> textArguments)
                         |> List.foldl Set.union Set.empty
 
                 _ ->
@@ -231,7 +226,10 @@ viewNumberArgumentInput updateNumberValue name =
     Html.div []
         [ Html.text name
         , Html.input
-            [ Events.onInput (updateNumberValue name) ]
+            [ Events.onInput (updateNumberValue name)
+            , Attributes.type_ "number"
+            , Attributes.min "0"
+            ]
             []
         ]
 
@@ -269,9 +267,9 @@ viewTextArgumentInput updateValue name =
 
 
 type alias Values =
-    { namedNumber : Dict String Int
-    , namedSelect : Dict String String
-    , namedText : Dict String String
+    { number : Dict String Int
+    , select : Dict String String
+    , text : Dict String String
     }
 
 
@@ -288,53 +286,48 @@ evaluatePart values maybeHash part =
         Text text ->
             text
 
-        Argument nameOrNumber details ->
-            case nameOrNumber of
-                ArgName name ->
-                    case details of
-                        None ->
-                            Dict.get name values.namedText
-                                |> Maybe.withDefault ("{" ++ name ++ "}")
+        Argument name details ->
+            case details of
+                None ->
+                    Dict.get name values.text
+                        |> Maybe.withDefault ("{" ++ name ++ "}")
 
-                        Simple tvpe maybeStyle ->
-                            "{TODO}"
+                Simple tvpe maybeStyle ->
+                    "{TODO}"
 
-                        Plural (PluralStyle maybeOffset pluralSelectors) ->
-                            case Dict.get name values.namedNumber of
-                                Just value ->
-                                    evaluatePluralSelectors
-                                        values
-                                        maybeOffset
-                                        value
-                                        pluralSelectors
+                Plural (PluralStyle maybeOffset pluralSelectors) ->
+                    case Dict.get name values.number of
+                        Just value ->
+                            evaluatePluralSelectors
+                                values
+                                maybeOffset
+                                value
+                                pluralSelectors
 
-                                Nothing ->
-                                    "{" ++ name ++ "}"
+                        Nothing ->
+                            "{" ++ name ++ "}"
 
-                        Select (SelectStyle selectSelectors) ->
-                            case Dict.get name values.namedSelect of
-                                Just value ->
-                                    evaluateSelectSelectors values
-                                        value
-                                        selectSelectors
+                Select (SelectStyle selectSelectors) ->
+                    case Dict.get name values.select of
+                        Just value ->
+                            evaluateSelectSelectors values
+                                value
+                                selectSelectors
 
-                                Nothing ->
-                                    "{" ++ name ++ "}"
+                        Nothing ->
+                            "{" ++ name ++ "}"
 
-                        Selectordinal (PluralStyle maybeOffset pluralSelectors) ->
-                            case Dict.get name values.namedNumber of
-                                Just value ->
-                                    evaluatePluralSelectors
-                                        values
-                                        maybeOffset
-                                        value
-                                        pluralSelectors
+                Selectordinal (PluralStyle maybeOffset pluralSelectors) ->
+                    case Dict.get name values.number of
+                        Just value ->
+                            evaluatePluralSelectors
+                                values
+                                maybeOffset
+                                value
+                                pluralSelectors
 
-                                Nothing ->
-                                    "{" ++ name ++ "}"
-
-                ArgNumber num ->
-                    "TODO"
+                        Nothing ->
+                            "{" ++ name ++ "}"
 
         Hash ->
             maybeHash
@@ -496,7 +489,7 @@ argumentPart =
         succeed Argument
             |. symbol "{"
             |. spaces
-            |= argNameOrNumber
+            |= argName
             |. spaces
             |= oneOf
                 [ succeed identity
@@ -705,12 +698,11 @@ selectorName =
             ]
 
 
-argNameOrNumber : Parser ArgNameOrNumber
-argNameOrNumber =
+argName : Parser String
+argName =
     oneOf
-        [ succeed ArgName
-            |= variable isFirstVarChar isVarChar Set.empty
-        , succeed ArgNumber
+        [ variable isFirstVarChar isVarChar Set.empty
+        , succeed toString
             |= (int |> andThen isPositive)
         ]
 
