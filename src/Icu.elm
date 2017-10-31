@@ -37,9 +37,9 @@ type Part
 type Details
     = None
     | Simple Type (Maybe SimpleStyle)
-    | Plural PluralStyle
-    | Select SelectStyle
-    | Selectordinal PluralStyle
+    | Plural (Maybe Int) (List PluralSelector)
+    | Select (List SelectSelector)
+    | Selectordinal (Maybe Int) (List PluralSelector)
 
 
 type Type
@@ -62,16 +62,8 @@ type SimpleStyle
     | Custom String
 
 
-type SelectStyle
-    = SelectStyle (List SelectSelector)
-
-
 type SelectSelector
     = SelectSelector String Message
-
-
-type PluralStyle
-    = PluralStyle (Maybe Int) (List PluralSelector)
 
 
 type PluralSelector
@@ -86,6 +78,16 @@ type SelectorName
     | Few
     | Many
     | Other
+
+
+selectSelectorMessage : SelectSelector -> Message
+selectSelectorMessage (SelectSelector _ message) =
+    message
+
+
+pluralSelectorMessage : PluralSelector -> Message
+pluralSelectorMessage (PluralSelector _ message) =
+    message
 
 
 
@@ -113,19 +115,19 @@ numberArgumentsFromPart part =
                 Simple Duration _ ->
                     Set.singleton name
 
-                Plural (PluralStyle _ pluralSelectors) ->
+                Plural _ pluralSelectors ->
                     pluralSelectors
-                        |> List.map (\(PluralSelector _ message) -> message |> numberArguments)
+                        |> List.map (pluralSelectorMessage >> numberArguments)
                         |> List.foldl Set.union (Set.singleton name)
 
-                Select (SelectStyle selectSelectors) ->
+                Select selectSelectors ->
                     selectSelectors
-                        |> List.map (\(SelectSelector _ message) -> message |> numberArguments)
+                        |> List.map (selectSelectorMessage >> numberArguments)
                         |> List.foldl Set.union Set.empty
 
-                Selectordinal (PluralStyle _ pluralSelectors) ->
+                Selectordinal _ pluralSelectors ->
                     pluralSelectors
-                        |> List.map (\(PluralSelector _ message) -> message |> numberArguments)
+                        |> List.map (pluralSelectorMessage >> numberArguments)
                         |> List.foldl Set.union (Set.singleton name)
 
                 _ ->
@@ -147,12 +149,12 @@ selectArgumentsFromPart part =
     case part of
         Argument name details ->
             case details of
-                Plural (PluralStyle _ pluralSelectors) ->
+                Plural _ pluralSelectors ->
                     pluralSelectors
-                        |> List.map (\(PluralSelector _ message) -> message |> selectArguments)
+                        |> List.map (pluralSelectorMessage >> selectArguments)
                         |> List.foldl Dict.union Dict.empty
 
-                Select (SelectStyle selectSelectors) ->
+                Select selectSelectors ->
                     let
                         selectArgument =
                             selectSelectors
@@ -160,12 +162,12 @@ selectArgumentsFromPart part =
                                 |> Set.fromList
                     in
                     selectSelectors
-                        |> List.map (\(SelectSelector _ message) -> message |> selectArguments)
+                        |> List.map (selectSelectorMessage >> selectArguments)
                         |> List.foldl Dict.union (Dict.singleton name selectArgument)
 
-                Selectordinal (PluralStyle _ pluralSelectors) ->
+                Selectordinal _ pluralSelectors ->
                     pluralSelectors
-                        |> List.map (\(PluralSelector _ message) -> message |> selectArguments)
+                        |> List.map (pluralSelectorMessage >> selectArguments)
                         |> List.foldl Dict.union Dict.empty
 
                 _ ->
@@ -199,19 +201,19 @@ textArgumentsFromPart part =
                 Simple Spellout _ ->
                     Set.singleton name
 
-                Plural (PluralStyle _ pluralSelectors) ->
+                Plural _ pluralSelectors ->
                     pluralSelectors
-                        |> List.map (\(PluralSelector _ message) -> message |> textArguments)
+                        |> List.map (pluralSelectorMessage >> textArguments)
                         |> List.foldl Set.union Set.empty
 
-                Select (SelectStyle selectSelectors) ->
+                Select selectSelectors ->
                     selectSelectors
-                        |> List.map (\(SelectSelector _ message) -> message |> textArguments)
+                        |> List.map (selectSelectorMessage >> textArguments)
                         |> List.foldl Set.union Set.empty
 
-                Selectordinal (PluralStyle _ pluralSelectors) ->
+                Selectordinal _ pluralSelectors ->
                     pluralSelectors
-                        |> List.map (\(PluralSelector _ message) -> message |> textArguments)
+                        |> List.map (pluralSelectorMessage >> textArguments)
                         |> List.foldl Set.union Set.empty
 
                 _ ->
@@ -219,6 +221,10 @@ textArgumentsFromPart part =
 
         _ ->
             Set.empty
+
+
+
+---- VIEW
 
 
 viewNumberArgumentInput : (String -> String -> msg) -> String -> Html msg
@@ -295,7 +301,7 @@ evaluatePart values maybeHash part =
                 Simple tvpe maybeStyle ->
                     "{TODO}"
 
-                Plural (PluralStyle maybeOffset pluralSelectors) ->
+                Plural maybeOffset pluralSelectors ->
                     case Dict.get name values.number of
                         Just value ->
                             evaluatePluralSelectors
@@ -307,7 +313,7 @@ evaluatePart values maybeHash part =
                         Nothing ->
                             "{" ++ name ++ "}"
 
-                Select (SelectStyle selectSelectors) ->
+                Select selectSelectors ->
                     case Dict.get name values.select of
                         Just value ->
                             evaluateSelectSelectors values
@@ -317,7 +323,7 @@ evaluatePart values maybeHash part =
                         Nothing ->
                             "{" ++ name ++ "}"
 
-                Selectordinal (PluralStyle maybeOffset pluralSelectors) ->
+                Selectordinal maybeOffset pluralSelectors ->
                     case Dict.get name values.number of
                         Just value ->
                             evaluatePluralSelectors
@@ -424,6 +430,7 @@ parse text =
     Parser.run icu text
 
 
+icu : Parser Message
 icu =
     message True
 
@@ -431,11 +438,17 @@ icu =
 message : Bool -> Parser Message
 message allowHash =
     oneOf
-        [ textPart allowHash
-        , lazy (\_ -> argumentPart)
-        , succeed Hash
-            |. symbol "#"
-        ]
+        (if allowHash then
+            [ textPart allowHash
+            , lazy (\_ -> argumentPart)
+            ]
+         else
+            [ textPart allowHash
+            , lazy (\_ -> argumentPart)
+            , succeed Hash
+                |. symbol "#"
+            ]
+        )
         |> repeat oneOrMore
         |> map joinTextParts
         |> inContext "a message"
@@ -506,6 +519,23 @@ argumentPart =
 
 details : Parser Details
 details =
+    let
+        isOtherPlural (PluralSelector selectorName _) =
+            case selectorName of
+                Other ->
+                    True
+
+                _ ->
+                    False
+
+        isOtherSelect (SelectSelector selectorName _) =
+            case selectorName of
+                "other" ->
+                    True
+
+                _ ->
+                    False
+    in
     inContext "argument details" <|
         oneOf
             [ succeed Simple
@@ -525,19 +555,61 @@ details =
                 |. spaces
                 |. symbol ","
                 |. spaces
-                |= lazy (\_ -> pluralStyle)
+                |= inContext "the offset value"
+                    (oneOf
+                        [ succeed identity
+                            |= offsetValue
+                            |. space
+                        , succeed Nothing
+                        ]
+                    )
+                |. spaces
+                |= (repeat oneOrMore (lazy (\_ -> pluralSelector))
+                        |> andThen
+                            (\pluralSelectors ->
+                                if pluralSelectors |> List.any isOtherPlural then
+                                    succeed pluralSelectors
+                                else
+                                    fail "at least an 'other' selector"
+                            )
+                   )
             , succeed Selectordinal
                 |. keyword "selectordinal"
                 |. spaces
                 |. symbol ","
                 |. spaces
-                |= lazy (\_ -> pluralStyle)
+                |= inContext "the offset value"
+                    (oneOf
+                        [ succeed identity
+                            |= offsetValue
+                            |. space
+                        , succeed Nothing
+                        ]
+                    )
+                |. spaces
+                |= (repeat oneOrMore (lazy (\_ -> pluralSelector))
+                        |> andThen
+                            (\pluralSelectors ->
+                                if pluralSelectors |> List.any isOtherPlural then
+                                    succeed pluralSelectors
+                                else
+                                    fail "at least an 'other' selector"
+                            )
+                   )
             , succeed Select
                 |. keyword "select"
                 |. spaces
                 |. symbol ","
                 |. spaces
-                |= lazy (\_ -> selectStyle)
+                |= (repeat oneOrMore (lazy (\_ -> selectSelector))
+                        |> andThen
+                            (\selectors ->
+                                if selectors |> List.any isOtherSelect then
+                                    succeed selectors
+                                else
+                                    fail "at least an 'other' selector"
+                            )
+                   )
             ]
 
 
@@ -586,29 +658,8 @@ simpleStyle =
         |> map toArgStyle
 
 
-selectStyle : Parser SelectStyle
-selectStyle =
-    let
-        isOther (SelectSelector selectorName _) =
-            case selectorName of
-                "other" ->
-                    True
-
-                _ ->
-                    False
-    in
-    repeat oneOrMore (lazy (\_ -> selector))
-        |> andThen
-            (\selectors ->
-                if selectors |> List.any isOther then
-                    succeed (SelectStyle selectors)
-                else
-                    fail "at least an 'other' selector"
-            )
-
-
-selector : Parser SelectSelector
-selector =
+selectSelector : Parser SelectSelector
+selectSelector =
     inContext "a selector" <|
         delayedCommit spaces <|
             succeed SelectSelector
@@ -618,38 +669,6 @@ selector =
                 |= lazy (\_ -> message True)
                 |. symbol "}"
                 |. spaces
-
-
-pluralStyle : Parser PluralStyle
-pluralStyle =
-    let
-        isOther (PluralSelector selectorName _) =
-            case selectorName of
-                Other ->
-                    True
-
-                _ ->
-                    False
-    in
-    succeed PluralStyle
-        |= (inContext "the offset value" <|
-                oneOf
-                    [ succeed identity
-                        |= offsetValue
-                        |. space
-                    , succeed Nothing
-                    ]
-           )
-        |. spaces
-        |= (repeat oneOrMore (lazy (\_ -> pluralSelector))
-                |> andThen
-                    (\pluralSelectors ->
-                        if pluralSelectors |> List.any isOther then
-                            succeed pluralSelectors
-                        else
-                            fail "at least an 'other' selector"
-                    )
-           )
 
 
 offsetValue : Parser (Maybe Int)
@@ -707,6 +726,10 @@ argName =
         ]
 
 
+
+---- PARSER HELPER
+
+
 isPositive : Int -> Parser Int
 isPositive int =
     if int < 0 then
@@ -735,23 +758,6 @@ spaces =
         )
 
 
-
----- PARSER HELPER
-
-
-escapeSymbol : String -> String
-escapeSymbol symbol =
-    case symbol of
-        "\n" ->
-            "\\n"
-
-        "\t" ->
-            "\\t"
-
-        _ ->
-            symbol
-
-
 isFirstVarChar : Char -> Bool
 isFirstVarChar char =
     Char.isLower char
@@ -767,27 +773,106 @@ isVarChar char =
         || (char == '_')
 
 
+normalizeSimpleArg : Details -> Details
+normalizeSimpleArg argDetails =
+    case argDetails of
+        Simple argType (Just argStyle) ->
+            case argType of
+                Number ->
+                    case argStyle of
+                        Integer ->
+                            argDetails
+
+                        Currency ->
+                            argDetails
+
+                        Percent ->
+                            argDetails
+
+                        _ ->
+                            Simple argType (Just (Custom (printStyle argStyle)))
+
+                Date ->
+                    case argStyle of
+                        Short ->
+                            argDetails
+
+                        Medium ->
+                            argDetails
+
+                        Long ->
+                            argDetails
+
+                        Full ->
+                            argDetails
+
+                        _ ->
+                            Simple argType (Just (Custom (printStyle argStyle)))
+
+                Time ->
+                    case argStyle of
+                        Short ->
+                            argDetails
+
+                        Medium ->
+                            argDetails
+
+                        Long ->
+                            argDetails
+
+                        Full ->
+                            argDetails
+
+                        _ ->
+                            Simple argType (Just (Custom (printStyle argStyle)))
+
+                Spellout ->
+                    Simple argType (Just (Custom (printStyle argStyle)))
+
+                Ordinal ->
+                    Simple argType (Just (Custom (printStyle argStyle)))
+
+                Duration ->
+                    Simple argType (Just (Custom (printStyle argStyle)))
+
+        _ ->
+            argDetails
+
+
+printStyle : SimpleStyle -> String
+printStyle argStyle =
+    case argStyle of
+        Integer ->
+            "integer"
+
+        Currency ->
+            "currency"
+
+        Percent ->
+            "percent"
+
+        Short ->
+            "short"
+
+        Medium ->
+            "medium"
+
+        Long ->
+            "long"
+
+        Full ->
+            "full"
+
+        Custom style ->
+            style
+
+
 
 ---- PARSER ERROR MESSAGES
 
 
 print : Parser.Error -> Html msg
 print ({ row, col, source, problem, context } as error) =
-    Html.code
-        [ Attributes.style
-            [ "font-family" => "'Source Code Pro', Consolas, \"Liberation Mono\", Menlo, Courier, monospace" ]
-        ]
-        (printSource row col source problem context)
-
-
-printSource :
-    Int
-    -> Int
-    -> String
-    -> Parser.Problem
-    -> List Parser.Context
-    -> List (Html msg)
-printSource row col source problem context =
     let
         message =
             [ Html.text "I ran into a problem while parsing "
@@ -854,6 +939,10 @@ printSource row col source problem context =
     , printProblem problem
     ]
         |> List.concat
+        |> Html.code
+            [ Attributes.style
+                [ "font-family" => "'Source Code Pro', Consolas, \"Liberation Mono\", Menlo, Courier, monospace" ]
+            ]
 
 
 flattenProblem :
@@ -1013,22 +1102,39 @@ printSingleProblem problem =
             [ Html.text <| toString problem ]
 
 
+escapeSymbol : String -> String
+escapeSymbol symbol =
+    case symbol of
+        "\n" ->
+            "\\n"
+
+        "\t" ->
+            "\\t"
+
+        _ ->
+            symbol
+
+
 
 ---- VIEW HELPER
 
 
+redText : String -> Html msg
 redText text =
     coloredText red text
 
 
+greenText : String -> Html msg
 greenText text =
     coloredText green text
 
 
+blueText : String -> Html msg
 blueText text =
     coloredText blue text
 
 
+coloredText : String -> String -> Html msg
 coloredText color text =
     Html.span
         [ Attributes.style
@@ -1037,114 +1143,23 @@ coloredText color text =
         [ Html.text text ]
 
 
+red : String
 red =
     "#cc0000"
 
 
+green : String
 green =
     "#73d216"
 
 
+blue : String
 blue =
     "#3465a4"
 
 
 
 ---- HELPER
-
-
-normalizeSimpleArg : Details -> Details
-normalizeSimpleArg argDetails =
-    case argDetails of
-        Simple argType (Just argStyle) ->
-            case argType of
-                Number ->
-                    case argStyle of
-                        Integer ->
-                            argDetails
-
-                        Currency ->
-                            argDetails
-
-                        Percent ->
-                            argDetails
-
-                        _ ->
-                            Simple argType (Just (Custom (printStyle argStyle)))
-
-                Date ->
-                    case argStyle of
-                        Short ->
-                            argDetails
-
-                        Medium ->
-                            argDetails
-
-                        Long ->
-                            argDetails
-
-                        Full ->
-                            argDetails
-
-                        _ ->
-                            Simple argType (Just (Custom (printStyle argStyle)))
-
-                Time ->
-                    case argStyle of
-                        Short ->
-                            argDetails
-
-                        Medium ->
-                            argDetails
-
-                        Long ->
-                            argDetails
-
-                        Full ->
-                            argDetails
-
-                        _ ->
-                            Simple argType (Just (Custom (printStyle argStyle)))
-
-                Spellout ->
-                    Simple argType (Just (Custom (printStyle argStyle)))
-
-                Ordinal ->
-                    Simple argType (Just (Custom (printStyle argStyle)))
-
-                Duration ->
-                    Simple argType (Just (Custom (printStyle argStyle)))
-
-        _ ->
-            argDetails
-
-
-printStyle : SimpleStyle -> String
-printStyle argStyle =
-    case argStyle of
-        Integer ->
-            "integer"
-
-        Currency ->
-            "currency"
-
-        Percent ->
-            "percent"
-
-        Short ->
-            "short"
-
-        Medium ->
-            "medium"
-
-        Long ->
-            "long"
-
-        Full ->
-            "full"
-
-        Custom style ->
-            style
 
 
 (=>) : a -> b -> ( a, b )
