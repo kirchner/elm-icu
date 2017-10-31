@@ -5,15 +5,17 @@ import Html exposing (Html)
 import Html.Attributes as Attributes
 import Html.Events as Events
 import Icu
+import Icu.Error
 import Parser
-import Set
-import String.Extra as String
+import Set exposing (Set)
 
 
+parse : String -> Result Parser.Error Icu.Message
 parse text =
     Icu.parse text
 
 
+main : Program Never Model Msg
 main =
     Html.beginnerProgram
         { model = model
@@ -133,7 +135,7 @@ view model =
                         [ data
                             |> Icu.textArguments
                             |> Set.toList
-                            |> List.map (Icu.viewTextArgumentInput UpdateTextValue)
+                            |> List.map (viewTextArgumentInput UpdateTextValue)
                             |> Html.div
                                 [ Attributes.style
                                     [ "display" => "flex"
@@ -144,7 +146,7 @@ view model =
                         , data
                             |> Icu.numberArguments
                             |> Set.toList
-                            |> List.map (Icu.viewNumberArgumentInput UpdateNumberValue)
+                            |> List.map (viewNumberArgumentInput UpdateNumberValue)
                             |> Html.div
                                 [ Attributes.style
                                     [ "display" => "flex"
@@ -157,7 +159,7 @@ view model =
                             |> Dict.toList
                             |> List.map
                                 (\( name, values ) ->
-                                    Icu.viewSelectArgumentInput UpdateSelectValue name values
+                                    viewSelectArgumentInput UpdateSelectValue name values
                                 )
                             |> Html.div
                                 [ Attributes.style
@@ -181,8 +183,49 @@ view model =
                         ]
 
                 Err error ->
-                    Icu.print error
+                    Icu.Error.print error
             ]
+        ]
+
+
+viewNumberArgumentInput : (String -> String -> msg) -> String -> Html msg
+viewNumberArgumentInput updateNumberValue name =
+    Html.div []
+        [ Html.text name
+        , Html.input
+            [ Events.onInput (updateNumberValue name)
+            , Attributes.type_ "number"
+            , Attributes.min "0"
+            ]
+            []
+        ]
+
+
+viewSelectArgumentInput : (String -> String -> msg) -> String -> Set String -> Html msg
+viewSelectArgumentInput updateSelectValue name values =
+    let
+        viewOption value =
+            Html.option
+                [ Attributes.value value ]
+                [ Html.text value ]
+    in
+    Html.div []
+        [ Html.text name
+        , values
+            |> Set.toList
+            |> List.map viewOption
+            |> Html.select
+                [ Events.onInput (updateSelectValue name) ]
+        ]
+
+
+viewTextArgumentInput : (String -> String -> msg) -> String -> Html msg
+viewTextArgumentInput updateValue name =
+    Html.div []
+        [ Html.text name
+        , Html.input
+            [ Events.onInput (updateValue name) ]
+            []
         ]
 
 

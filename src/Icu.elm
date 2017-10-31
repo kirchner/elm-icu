@@ -4,12 +4,8 @@ module Icu
         , evaluate
         , numberArguments
         , parse
-        , print
         , selectArguments
         , textArguments
-        , viewNumberArgumentInput
-        , viewSelectArgumentInput
-        , viewTextArgumentInput
         )
 
 import Char
@@ -221,204 +217,6 @@ textArgumentsFromPart part =
 
         _ ->
             Set.empty
-
-
-
----- VIEW
-
-
-viewNumberArgumentInput : (String -> String -> msg) -> String -> Html msg
-viewNumberArgumentInput updateNumberValue name =
-    Html.div []
-        [ Html.text name
-        , Html.input
-            [ Events.onInput (updateNumberValue name)
-            , Attributes.type_ "number"
-            , Attributes.min "0"
-            ]
-            []
-        ]
-
-
-viewSelectArgumentInput : (String -> String -> msg) -> String -> Set String -> Html msg
-viewSelectArgumentInput updateSelectValue name values =
-    let
-        viewOption value =
-            Html.option
-                [ Attributes.value value ]
-                [ Html.text value ]
-    in
-    Html.div []
-        [ Html.text name
-        , values
-            |> Set.toList
-            |> List.map viewOption
-            |> Html.select
-                [ Events.onInput (updateSelectValue name) ]
-        ]
-
-
-viewTextArgumentInput : (String -> String -> msg) -> String -> Html msg
-viewTextArgumentInput updateValue name =
-    Html.div []
-        [ Html.text name
-        , Html.input
-            [ Events.onInput (updateValue name) ]
-            []
-        ]
-
-
-
----- EVALUATER
-
-
-type alias Values =
-    { number : Dict String Int
-    , select : Dict String String
-    , text : Dict String String
-    }
-
-
-evaluate : Values -> Message -> String
-evaluate values message =
-    message
-        |> List.map (evaluatePart values Nothing)
-        |> String.concat
-
-
-evaluatePart : Values -> Maybe Int -> Part -> String
-evaluatePart values maybeHash part =
-    case part of
-        Text text ->
-            text
-
-        Argument name details ->
-            case details of
-                None ->
-                    Dict.get name values.text
-                        |> Maybe.withDefault ("{" ++ name ++ "}")
-
-                Simple tvpe maybeStyle ->
-                    "{TODO}"
-
-                Plural maybeOffset pluralSelectors ->
-                    case Dict.get name values.number of
-                        Just value ->
-                            evaluatePluralSelectors
-                                values
-                                maybeOffset
-                                value
-                                pluralSelectors
-
-                        Nothing ->
-                            "{" ++ name ++ "}"
-
-                Select selectSelectors ->
-                    case Dict.get name values.select of
-                        Just value ->
-                            evaluateSelectSelectors values
-                                value
-                                selectSelectors
-
-                        Nothing ->
-                            "{" ++ name ++ "}"
-
-                Selectordinal maybeOffset pluralSelectors ->
-                    case Dict.get name values.number of
-                        Just value ->
-                            evaluatePluralSelectors
-                                values
-                                maybeOffset
-                                value
-                                pluralSelectors
-
-                        Nothing ->
-                            "{" ++ name ++ "}"
-
-        Hash ->
-            maybeHash
-                |> Maybe.map toString
-                |> Maybe.withDefault "#"
-
-
-evaluatePluralSelectors : Values -> Maybe Int -> Int -> List PluralSelector -> String
-evaluatePluralSelectors values maybeOffset value pluralSelectors =
-    let
-        printedValue =
-            maybeOffset
-                |> Maybe.map ((-) value)
-                |> Maybe.withDefault value
-
-        evaluateMessage message =
-            message
-                |> List.map (evaluatePart values (Just printedValue))
-                |> String.concat
-    in
-    pluralSelectors
-        |> List.filterMap
-            (\(PluralSelector name message) ->
-                case name of
-                    ExplicitValue v ->
-                        if v == value then
-                            Just (evaluateMessage message)
-                        else
-                            Nothing
-
-                    Zero ->
-                        if value == 0 then
-                            Just (evaluateMessage message)
-                        else
-                            Nothing
-
-                    One ->
-                        if value == 1 then
-                            Just (evaluateMessage message)
-                        else
-                            Nothing
-
-                    Two ->
-                        if value == 2 then
-                            Just (evaluateMessage message)
-                        else
-                            Nothing
-
-                    Few ->
-                        if value <= 12 then
-                            Just (evaluateMessage message)
-                        else
-                            Nothing
-
-                    Many ->
-                        if value > 12 then
-                            Just (evaluateMessage message)
-                        else
-                            Nothing
-
-                    Other ->
-                        Just (evaluateMessage message)
-            )
-        |> List.head
-        |> Maybe.withDefault "{missingValue}"
-
-
-evaluateSelectSelectors : Values -> String -> List SelectSelector -> String
-evaluateSelectSelectors values value selectSelectors =
-    let
-        evaluateMessage message =
-            message
-                |> List.map (evaluatePart values Nothing)
-                |> String.concat
-    in
-    selectSelectors
-        |> List.filterMap
-            (\(SelectSelector v message) ->
-                if v == value then
-                    Just (evaluateMessage message)
-                else
-                    Nothing
-            )
-        |> List.head
-        |> Maybe.withDefault "{missingValue}"
 
 
 
@@ -868,300 +666,153 @@ printStyle argStyle =
 
 
 
----- PARSER ERROR MESSAGES
+---- EVALUATER
 
 
-print : Parser.Error -> Html msg
-print ({ row, col, source, problem, context } as error) =
+type alias Values =
+    { number : Dict String Int
+    , select : Dict String String
+    , text : Dict String String
+    }
+
+
+evaluate : Values -> Message -> String
+evaluate values message =
+    message
+        |> List.map (evaluatePart values Nothing)
+        |> String.concat
+
+
+evaluatePart : Values -> Maybe Int -> Part -> String
+evaluatePart values maybeHash part =
+    case part of
+        Text text ->
+            text
+
+        Argument name details ->
+            case details of
+                None ->
+                    Dict.get name values.text
+                        |> Maybe.withDefault ("{" ++ name ++ "}")
+
+                Simple tvpe maybeStyle ->
+                    "{TODO}"
+
+                Plural maybeOffset pluralSelectors ->
+                    case Dict.get name values.number of
+                        Just value ->
+                            evaluatePluralSelectors
+                                values
+                                maybeOffset
+                                value
+                                pluralSelectors
+
+                        Nothing ->
+                            "{" ++ name ++ "}"
+
+                Select selectSelectors ->
+                    case Dict.get name values.select of
+                        Just value ->
+                            evaluateSelectSelectors values
+                                value
+                                selectSelectors
+
+                        Nothing ->
+                            "{" ++ name ++ "}"
+
+                Selectordinal maybeOffset pluralSelectors ->
+                    case Dict.get name values.number of
+                        Just value ->
+                            evaluatePluralSelectors
+                                values
+                                maybeOffset
+                                value
+                                pluralSelectors
+
+                        Nothing ->
+                            "{" ++ name ++ "}"
+
+        Hash ->
+            maybeHash
+                |> Maybe.map toString
+                |> Maybe.withDefault "#"
+
+
+evaluatePluralSelectors : Values -> Maybe Int -> Int -> List PluralSelector -> String
+evaluatePluralSelectors values maybeOffset value pluralSelectors =
     let
-        message =
-            [ Html.text "I ran into a problem while parsing "
-            , context
-                |> List.head
-                |> Maybe.map .description
-                |> Maybe.map blueText
-                |> Maybe.withDefault (Html.text "")
-            , context
-                |> List.drop 1
-                |> List.head
-                |> Maybe.map .description
-                |> Maybe.map (\desc -> " of " ++ desc)
-                |> Maybe.map Html.text
-                |> Maybe.withDefault (Html.text "")
-            , Html.text "."
-            ]
+        printedValue =
+            maybeOffset
+                |> Maybe.map ((-) value)
+                |> Maybe.withDefault value
 
-        contextRow =
-            context
-                |> List.head
-                |> Maybe.map .row
-                |> Maybe.withDefault row
-
-        contextCol =
-            context
-                |> List.head
-                |> Maybe.map .col
-                |> Maybe.withDefault col
-
-        printLine y =
-            if y > 0 then
-                source
-                    |> String.split "\n"
-                    |> List.drop (y - 1)
-                    |> List.head
-                    |> Maybe.map
-                        (\line ->
-                            [ Html.text (" " ++ toString y ++ "| ")
-                            , -- TODO: proper multiline coloring
-                              Html.text line
-                            , Html.text "\n"
-                            ]
-                        )
-                    |> Maybe.withDefault []
-            else
-                []
-
-        code =
-            [ printLine (row - 2)
-            , printLine (row - 1)
-            , printLine row
-            , [ redText arrow ]
-            ]
-                |> List.concat
-
-        arrow =
-            String.repeat (col + 3) " " ++ "^"
+        evaluateMessage message =
+            message
+                |> List.map (evaluatePart values (Just printedValue))
+                |> String.concat
     in
-    [ message
-    , [ Html.text "\n\n\n" ]
-    , code
-    , [ Html.text "\n\n" ]
-    , printProblem problem
-    ]
-        |> List.concat
-        |> Html.code
-            [ Attributes.style
-                [ "font-family" => "'Source Code Pro', Consolas, \"Liberation Mono\", Menlo, Courier, monospace" ]
-            ]
+    pluralSelectors
+        |> List.filterMap
+            (\(PluralSelector name message) ->
+                case name of
+                    ExplicitValue v ->
+                        if v == value then
+                            Just (evaluateMessage message)
+                        else
+                            Nothing
+
+                    Zero ->
+                        if value == 0 then
+                            Just (evaluateMessage message)
+                        else
+                            Nothing
+
+                    One ->
+                        if value == 1 then
+                            Just (evaluateMessage message)
+                        else
+                            Nothing
+
+                    Two ->
+                        if value == 2 then
+                            Just (evaluateMessage message)
+                        else
+                            Nothing
+
+                    Few ->
+                        if value <= 12 then
+                            Just (evaluateMessage message)
+                        else
+                            Nothing
+
+                    Many ->
+                        if value > 12 then
+                            Just (evaluateMessage message)
+                        else
+                            Nothing
+
+                    Other ->
+                        Just (evaluateMessage message)
+            )
+        |> List.head
+        |> Maybe.withDefault "{missingValue}"
 
 
-flattenProblem :
-    Parser.Problem
-    ->
-        { keywords : List String
-        , symbols : List String
-        , others : List Parser.Problem
-        }
-flattenProblem problem =
-    flattenProblemHelper problem
-        { keywords = []
-        , symbols = []
-        , others = []
-        }
-        |> (\collected ->
-                { collected
-                    | keywords = List.unique collected.keywords
-                    , symbols = List.unique collected.symbols
-                }
-           )
-
-
-flattenProblemHelper :
-    Parser.Problem
-    ->
-        { keywords : List String
-        , symbols : List String
-        , others : List Parser.Problem
-        }
-    ->
-        { keywords : List String
-        , symbols : List String
-        , others : List Parser.Problem
-        }
-flattenProblemHelper problem collected =
-    case problem of
-        ExpectingKeyword keyword ->
-            { collected | keywords = keyword :: collected.keywords }
-
-        ExpectingSymbol symbol ->
-            { collected | symbols = symbol :: collected.symbols }
-
-        BadOneOf problems ->
-            problems
-                |> List.foldl flattenProblemHelper collected
-
-        _ ->
-            { collected | others = problem :: collected.others }
-
-
-printKeywords : List String -> Maybe (List (Html msg))
-printKeywords keywords =
-    case keywords of
-        [] ->
-            Nothing
-
-        _ ->
-            [ [ Html.text "one of the following keywords:\n\n" ]
-            , keywords
-                |> List.map
-                    (\keyword ->
-                        [ Html.text "  "
-                        , greenText keyword
-                        ]
-                    )
-                |> List.intersperse [ Html.text ",\n" ]
-                |> List.concat
-            ]
-                |> List.concat
-                |> Just
-
-
-printSymbols : List String -> Maybe (List (Html msg))
-printSymbols symbols =
-    case symbols of
-        [] ->
-            Nothing
-
-        _ ->
-            [ [ Html.text "one of the following symbols:\n\n  " ]
-            , symbols
-                |> List.map
-                    (\symbol ->
-                        [ Html.text "'"
-                        , greenText symbol
-                        , Html.text "'"
-                        ]
-                    )
-                |> List.intersperse [ Html.text ",  " ]
-                |> List.concat
-            ]
-                |> List.concat
-                |> Just
-
-
-printProblem : Parser.Problem -> List (Html msg)
-printProblem problem =
+evaluateSelectSelectors : Values -> String -> List SelectSelector -> String
+evaluateSelectSelectors values value selectSelectors =
     let
-        { keywords, symbols, others } =
-            flattenProblem problem
+        evaluateMessage message =
+            message
+                |> List.map (evaluatePart values Nothing)
+                |> String.concat
     in
-    [ [ Html.text "I expected " ]
-    , [ printKeywords keywords
-      , printSymbols symbols
-      , case others of
-            [] ->
-                Nothing
-
-            _ ->
-                others
-                    |> List.map printSingleProblem
-                    |> List.concat
-                    |> List.intersperse (Html.text " or ")
-                    |> Just
-      ]
-        |> List.filterMap identity
-        |> List.intersperse [ Html.text ",\n\nor " ]
-        |> List.concat
-    , [ Html.text "." ]
-    ]
-        |> List.concat
-
-
-printSingleProblem : Parser.Problem -> List (Html msg)
-printSingleProblem problem =
-    case problem of
-        BadOneOf problems ->
-            []
-
-        BadInt ->
-            [ greenText "a number" ]
-
-        BadRepeat ->
-            []
-
-        ExpectingSymbol symbol ->
-            [ Html.text "the symbol '"
-            , greenText <|
-                escapeSymbol symbol
-            , Html.text "'"
-            ]
-
-        ExpectingKeyword keyword ->
-            [ Html.text "the keyword '"
-            , greenText keyword
-            , Html.text "'"
-            ]
-
-        ExpectingVariable ->
-            [ greenText "a variable" ]
-
-        Fail message ->
-            [ greenText message ]
-
-        _ ->
-            [ Html.text <| toString problem ]
-
-
-escapeSymbol : String -> String
-escapeSymbol symbol =
-    case symbol of
-        "\n" ->
-            "\\n"
-
-        "\t" ->
-            "\\t"
-
-        _ ->
-            symbol
-
-
-
----- VIEW HELPER
-
-
-redText : String -> Html msg
-redText text =
-    coloredText red text
-
-
-greenText : String -> Html msg
-greenText text =
-    coloredText green text
-
-
-blueText : String -> Html msg
-blueText text =
-    coloredText blue text
-
-
-coloredText : String -> String -> Html msg
-coloredText color text =
-    Html.span
-        [ Attributes.style
-            [ "color" => color ]
-        ]
-        [ Html.text text ]
-
-
-red : String
-red =
-    "#cc0000"
-
-
-green : String
-green =
-    "#73d216"
-
-
-blue : String
-blue =
-    "#3465a4"
-
-
-
----- HELPER
-
-
-(=>) : a -> b -> ( a, b )
-(=>) =
-    (,)
+    selectSelectors
+        |> List.filterMap
+            (\(SelectSelector v message) ->
+                if v == value then
+                    Just (evaluateMessage message)
+                else
+                    Nothing
+            )
+        |> List.head
+        |> Maybe.withDefault "{missingValue}"
