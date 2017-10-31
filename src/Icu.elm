@@ -2,6 +2,7 @@ module Icu
     exposing
         ( Message
         , evaluate
+        , generateFunction
         , numberArguments
         , parse
         , selectArguments
@@ -10,10 +11,6 @@ module Icu
 
 import Char
 import Dict exposing (Dict)
-import Html exposing (Html)
-import Html.Attributes as Attributes
-import Html.Events as Events
-import List.Extra as List
 import Parser exposing (..)
 import Parser.LanguageKit exposing (..)
 import Set exposing (Set)
@@ -816,3 +813,180 @@ evaluateSelectSelectors values value selectSelectors =
             )
         |> List.head
         |> Maybe.withDefault "{missingValue}"
+
+
+
+---- GENERATE ELM CODE
+
+
+type ArgumentType
+    = StringArgument
+    | IntArgument
+
+
+generateFunction : String -> Message -> String
+generateFunction translationKey message =
+    let
+        arguments =
+            [ numberArguments message
+                |> Set.toList
+                |> List.map (\argument -> ( IntArgument, argument ))
+            , textArguments message
+                |> Set.toList
+                |> List.map (\argument -> ( StringArgument, argument ))
+            ]
+                |> List.concat
+    in
+    [ translationKey
+    , " : "
+    , [ arguments
+            |> List.map
+                (\( argumentType, _ ) ->
+                    case argumentType of
+                        StringArgument ->
+                            "String"
+
+                        IntArgument ->
+                            "Int"
+                )
+      , [ "String" ]
+      ]
+        |> List.concat
+        |> String.join " -> "
+    , "\n"
+    , (translationKey :: (arguments |> List.map Tuple.second))
+        |> String.join " "
+    , " =\n"
+    , generateMessage Nothing message
+        |> indent
+    ]
+        |> String.concat
+
+
+generateMessage : Maybe String -> Message -> String
+generateMessage maybeHashName message =
+    let
+        parts =
+            message
+                |> List.map (generatePart maybeHashName)
+    in
+    case parts of
+        [] ->
+            "\"\""
+
+        part :: [] ->
+            part
+
+        _ ->
+            [ "[ "
+            , parts
+                |> String.join "\n, "
+            , "\n]\n"
+            , indent "|> String.concat"
+            ]
+                |> String.concat
+
+
+generatePart : Maybe String -> Part -> String
+generatePart maybeHashName part =
+    case part of
+        Text text ->
+            [ "\""
+            , text
+            , "\""
+            ]
+                |> String.concat
+
+        Hash ->
+            case maybeHashName of
+                Just hashName ->
+                    hashName
+
+                Nothing ->
+                    Debug.crash "no hashname"
+
+        Argument name details ->
+            case details of
+                None ->
+                    name
+
+                Plural maybeOffset pluralSelectors ->
+                    generatePlural name maybeOffset pluralSelectors
+
+                _ ->
+                    "TODO"
+
+
+generatePlural : String -> Maybe Int -> List PluralSelector -> String
+generatePlural argumentName maybeOffset pluralSelectors =
+    let
+        generatePluralSelector (PluralSelector selectorName message) =
+            case selectorName of
+                Zero ->
+                    ( 0, selectorName, generateMessage (Just argumentName) message )
+
+                One ->
+                    ( 1, selectorName, generateMessage (Just argumentName) message )
+
+                Two ->
+                    ( 2, selectorName, generateMessage (Just argumentName) message )
+
+                Few ->
+                    ( -2, selectorName, generateMessage (Just argumentName) message )
+
+                Many ->
+                    ( -1, selectorName, generateMessage (Just argumentName) message )
+
+                Other ->
+                    ( -3, selectorName, generateMessage (Just argumentName) message )
+
+                ExplicitValue amount ->
+                    ( amount, selectorName, generateMessage (Just argumentName) message )
+    in
+    case maybeOffset of
+        Nothing ->
+            [ "case "
+            , argumentName
+            , " of\n"
+            , pluralSelectors
+                |> List.map generatePluralSelector
+                |> List.sortBy (\( ord, _, _ ) -> -1 * ord)
+                |> List.map
+                    (\( _, selectorName, text ) ->
+                        case selectorName of
+                            ExplicitValue amount ->
+                                [ toString amount
+                                , " ->\n"
+                                , indent text
+                                ]
+                                    |> String.concat
+
+                            Other ->
+                                [ "_ ->\n"
+                                , indent text
+                                ]
+                                    |> String.concat
+
+                            _ ->
+                                "TODO"
+                    )
+                |> List.intersperse "\n\n"
+                |> String.concat
+                |> indent
+            ]
+                |> String.concat
+
+        Just _ ->
+            "TODO"
+
+
+
+---- HELPER
+
+
+indent : String -> String
+indent text =
+    text
+        |> String.split "\n"
+        |> List.map (\line -> "    " ++ line)
+        |> String.join "\n"
