@@ -4,6 +4,8 @@ module Internal.Generate
         , function
         , indent
         , list
+        , recordPatternMatch
+        , recordType
         , string
         , tvpe
         )
@@ -27,12 +29,13 @@ function { name, arguments, returnType, body } =
             arguments |> List.map Tuple.second
     in
     [ name
-    , " : "
+    , " : \n"
     , [ argumentNames
       , [ returnType ]
       ]
         |> List.concat
-        |> String.join " -> "
+        |> String.join "\n-> "
+        |> indent
     , "\n"
     , (name :: argumentTypes)
         |> String.join " "
@@ -100,6 +103,35 @@ tvpe { name, constructors } =
       ]
         |> String.concat
         |> indent
+    ]
+        |> String.concat
+
+
+recordType : List ( String, String ) -> String
+recordType fields =
+    let
+        field ( key, tvpe ) =
+            [ key
+            , " : "
+            , tvpe
+            ]
+                |> String.concat
+    in
+    [ "{ "
+    , fields
+        |> List.map field
+        |> String.join "\n, "
+    , "\n}"
+    ]
+        |> String.concat
+
+
+recordPatternMatch : List String -> String
+recordPatternMatch keys =
+    [ "{ "
+    , keys
+        |> String.join ", "
+    , " }"
     ]
         |> String.concat
 

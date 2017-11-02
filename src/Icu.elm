@@ -993,15 +993,14 @@ evaluateSelectSelectors values value selectSelectors =
 {-| -}
 generate : String -> Message -> String
 generate translationKey message =
-    [ Generate.function
-        { name = translationKey
-        , arguments =
+    let
+        arguments =
             [ pluralArguments message
                 |> Set.toList
-                |> List.map (\argument -> ( "Int", argument ))
+                |> List.map (\argument -> ( argument, "Int" ))
             , noneArguments message
                 |> Set.toList
-                |> List.map (\argument -> ( "String", argument ))
+                |> List.map (\argument -> ( argument, "String" ))
             , internalSelectArguments message
                 |> Dict.map
                     (\argumentName selectSelectors ->
@@ -1010,10 +1009,26 @@ generate translationKey message =
                 |> Dict.toList
                 |> List.map
                     (\( argumentName, { name } ) ->
-                        ( name, argumentName )
+                        ( argumentName, name )
                     )
             ]
                 |> List.concat
+    in
+    [ Generate.function
+        { name = translationKey
+        , arguments =
+            case arguments of
+                [] ->
+                    []
+
+                _ ->
+                    [ ( arguments
+                            |> Generate.recordType
+                      , arguments
+                            |> List.map Tuple.first
+                            |> Generate.recordPatternMatch
+                      )
+                    ]
         , returnType = "String"
         , body = generateMessage translationKey Nothing message
         }
