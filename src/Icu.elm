@@ -65,9 +65,6 @@ type PluralSelector
 
 type SelectorName
     = ExplicitValue Int
-    | Zero
-    | One
-    | Two
     | Few
     | Many
     | Other
@@ -503,9 +500,9 @@ selectorName =
                 succeed ExplicitValue
                     |. symbol "="
                     |= (int |> andThen isPositive)
-            , keyword "zero" |> map (always Zero)
-            , keyword "one" |> map (always One)
-            , keyword "two" |> map (always Two)
+            , keyword "zero" |> map (\_ -> ExplicitValue 0)
+            , keyword "one" |> map (\_ -> ExplicitValue 1)
+            , keyword "two" |> map (\_ -> ExplicitValue 2)
             , keyword "few" |> map (always Few)
             , keyword "many" |> map (always Many)
             , keyword "other" |> map (always Other)
@@ -758,24 +755,6 @@ evaluatePluralSelectors values maybeOffset value pluralSelectors =
                         else
                             Nothing
 
-                    Zero ->
-                        if value == 0 then
-                            Just (evaluateMessage message)
-                        else
-                            Nothing
-
-                    One ->
-                        if value == 1 then
-                            Just (evaluateMessage message)
-                        else
-                            Nothing
-
-                    Two ->
-                        if value == 2 then
-                            Just (evaluateMessage message)
-                        else
-                            Nothing
-
                     Few ->
                         if value <= 12 then
                             Just (evaluateMessage message)
@@ -922,20 +901,11 @@ generatePlural argumentName maybeOffset pluralSelectors =
     let
         generatePluralSelector (PluralSelector selectorName message) =
             case selectorName of
-                Zero ->
-                    ( 0, selectorName, generateMessage (Just argumentName) message )
-
-                One ->
-                    ( 1, selectorName, generateMessage (Just argumentName) message )
-
-                Two ->
-                    ( 2, selectorName, generateMessage (Just argumentName) message )
+                Many ->
+                    ( -1, selectorName, generateMessage (Just argumentName) message )
 
                 Few ->
                     ( -2, selectorName, generateMessage (Just argumentName) message )
-
-                Many ->
-                    ( -1, selectorName, generateMessage (Just argumentName) message )
 
                 Other ->
                     ( -3, selectorName, generateMessage (Just argumentName) message )
