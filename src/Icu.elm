@@ -989,12 +989,6 @@ evaluateSelectSelectors values value selectSelectors =
 ---- GENERATE ELM CODE
 
 
-type ArgumentType
-    = StringArgument
-    | IntArgument
-    | CustomArgument String
-
-
 {-| -}
 generateFunction : String -> Message -> String
 generateFunction translationKey message =
@@ -1002,10 +996,10 @@ generateFunction translationKey message =
         arguments =
             [ pluralArguments message
                 |> Set.toList
-                |> List.map (\argument -> ( IntArgument, argument ))
+                |> List.map (\argument -> ( "Int", argument ))
             , noneArguments message
                 |> Set.toList
-                |> List.map (\argument -> ( StringArgument, argument ))
+                |> List.map (\argument -> ( "String", argument ))
             , internalSelectArguments message
                 |> Dict.map
                     (\argumentName selectSelectors ->
@@ -1014,7 +1008,7 @@ generateFunction translationKey message =
                 |> Dict.toList
                 |> List.map
                     (\( argumentName, { name } ) ->
-                        ( CustomArgument name, argumentName )
+                        ( name, argumentName )
                     )
             ]
                 |> List.concat
@@ -1022,18 +1016,7 @@ generateFunction translationKey message =
     [ translationKey
     , " : "
     , [ arguments
-            |> List.map
-                (\( argumentType, _ ) ->
-                    case argumentType of
-                        StringArgument ->
-                            "String"
-
-                        IntArgument ->
-                            "Int"
-
-                        CustomArgument tvpe ->
-                            tvpe
-                )
+            |> List.map Tuple.first
       , [ "String" ]
       ]
         |> List.concat
