@@ -1,12 +1,15 @@
 {
     "version": "1.0.0",
-    "summary": "helpful summary of your project, less than 80 characters",
+    "summary": "parsing icu messages and elm code generation of localization functions",
     "repository": "https://github.com/user/project.git",
-    "license": "BSD3",
+    "license": "Apache License, version 2.0",
     "source-directories": [
         "./src"
     ],
-    "exposed-modules": [],
+    "exposed-modules": [
+        "Icu",
+        "Icu.Error"
+    ],
     "dependencies": {
         "elm-community/list-extra": "6.1.0 <= v < 7.0.0",
         "elm-community/string-extra": "1.4.0 <= v < 2.0.0",

@@ -1,13 +1,164 @@
 module Icu
     exposing
         ( Message
+        , Values
         , evaluate
         , generateFunction
-        , numberArguments
+        , noneArguments
         , parse
+        , pluralArguments
         , selectArguments
-        , textArguments
         )
+
+{-| This module exposes a type representation of the [ICU Message
+Format](http://icu-project.org/apiref/icu4j/com/ibm/icu/text/MessageFormat.html)
+called `Message`.
+
+  - You can obtain these types by parsing `String`s using `parse : String
+    -> Result Error Message`
+
+  - You can evaluate `Message`'s using `evaluate : Values -> Message ->
+    String` by providing dictionaries containing the needed values.
+
+  - You can generate elm code of functions from `Message`'s using
+    `generateFunction : String -> Message -> String`. For example
+
+        [ "{count, plural,"
+        , "=0{There is no {item}.} "
+        , "=1{There is one {item}.} "
+        , "other{There are # {item}s.}"
+        , "}"
+        ]
+            |> String.concat
+            |> parse
+            |> Result.map (generateFunction "itemCountInfo")
+
+    will result in the following elm code
+
+        itemCountInfo : Int -> String -> String
+        itemCountInfo count item =
+            case count of
+                1 ->
+                    [ "There is one "
+                    , item
+                    , "."
+                    ]
+                        |> String.concat
+
+                0 ->
+                    [ "There is no "
+                    , item
+                    , "."
+                    ]
+                        |> String.concat
+
+                _ ->
+                    [ "There are "
+                    , count
+                    , " "
+                    , item
+                    , "s."
+                    ]
+                        |> String.concat
+
+
+# Open things
+
+  - code generation for simple and selectordinal arguments
+
+
+# EBNF
+
+Check out the original [ICU Message
+Format](http://icu-project.org/apiref/icu4j/com/ibm/icu/text/MessageFormat.html).
+The parser in this module is based on the following simplified grammar:
+
+```ebnf
+message = messageText, { argument, messageText } ;
+
+messageText = ? any text. {, } and # must be quoted like '{', '' becomes ' ? ;
+
+argument
+    = ( "{", argName, "}" )
+    | ( "{", argName, ",", argType, [ ",", argStyle ], "}" )
+    | ( "{", argName, ",", "plural", ",", pluralStyle "}" )
+    | ( "{", argName, ",", "select", ",", selectStyle "}" )
+    | ( "{", argName, ",", "selectordinal", ",", pluralStyle, "}" ) ;
+
+argName = lower case letter, { letter | "_" } ;
+
+argType
+    = "number"
+    | "date"
+    | "time"
+    | "spellout"
+    | "ordinal"
+    | "duration" ;
+
+argStyle
+    = "short"
+    | "medium"
+    | "long"
+    | "full"
+    | "integer"
+    | "currency"
+    | "percent"
+    | argStyleText ;
+
+argStyleText = ? depends on the argType ? ;
+
+
+pluralStyle =
+    [ "offset:", ? integer ? ],
+    { pluralSelector, "{", message, "}" },
+    "other", "{", message, "}",
+    { pluralSelector, "{", message, "}" } ;
+
+pluralSelector
+    = ( '=', ? integer ? )
+    | "zero"
+    | "one"
+    | "two"
+    | "few"
+    | "many"
+
+
+selectStyle =
+    { selector, "{", message, "}" },
+    "other", "{", message, "}",
+    { selector, "{", message, "}" } ;
+
+selector = lower case letter, { letter | "_" } ;
+```
+
+The allowed patterns for `argStyleText` are the following:
+[number](https://docs.oracle.com/javase/9/docs/api/java/text/DecimalFormat.html),
+[date and
+time](https://docs.oracle.com/javase/9/docs/api/java/text/SimpleDateFormat.html),
+[spellout, ordinal and
+duration](http://icu-project.org/apiref/icu4j/com/ibm/icu/text/RuleBasedNumberFormat.html)
+
+
+# Types
+
+@docs Message, noneArguments, pluralArguments, selectArguments
+
+
+# Parsing
+
+@docs parse
+
+
+# Evalution
+
+@docs evaluate, Values
+
+
+# Code generation
+
+@docs generateFunction
+
+-}
 
 import Char
 import Dict exposing (Dict)
@@ -17,8 +168,10 @@ import Set exposing (Set)
 import String.Extra as String
 
 
-type alias Message =
-    List Part
+{-| This represents an ICU Message.
+-}
+type Message
+    = Message (List Part)
 
 
 type Part
@@ -84,51 +237,89 @@ pluralSelectorMessage (PluralSelector _ message) =
 ---- ARGUMENT RETRIEVAL
 
 
-numberArguments : Message -> Set String
-numberArguments message =
+{-| Return the names of all none arguments in the `Message`.
+-}
+noneArguments : Message -> Set String
+noneArguments (Message message) =
     message
-        |> List.map numberArgumentsFromPart
+        |> List.map noneArgumentsFromPart
         |> List.foldl Set.union Set.empty
 
 
-numberArgumentsFromPart : Part -> Set String
-numberArgumentsFromPart part =
+noneArgumentsFromPart : Part -> Set String
+noneArgumentsFromPart part =
     case part of
         Argument name details ->
             case details of
-                Simple Number _ ->
+                None ->
                     Set.singleton name
 
-                Simple Ordinal _ ->
-                    Set.singleton name
-
-                Simple Duration _ ->
-                    Set.singleton name
+                Simple _ _ ->
+                    Set.empty
 
                 Plural _ pluralSelectors ->
                     pluralSelectors
-                        |> List.map (pluralSelectorMessage >> numberArguments)
-                        |> List.foldl Set.union (Set.singleton name)
+                        |> List.map (pluralSelectorMessage >> pluralArguments)
+                        |> List.foldl Set.union Set.empty
 
                 Select selectSelectors ->
                     selectSelectors
-                        |> List.map (selectSelectorMessage >> numberArguments)
+                        |> List.map (selectSelectorMessage >> pluralArguments)
                         |> List.foldl Set.union Set.empty
 
                 Selectordinal _ pluralSelectors ->
                     pluralSelectors
-                        |> List.map (pluralSelectorMessage >> numberArguments)
-                        |> List.foldl Set.union (Set.singleton name)
-
-                _ ->
-                    Set.empty
+                        |> List.map (pluralSelectorMessage >> pluralArguments)
+                        |> List.foldl Set.union Set.empty
 
         _ ->
             Set.empty
 
 
+{-| Return the names of all plural arguments in the `Message`.
+-}
+pluralArguments : Message -> Set String
+pluralArguments (Message message) =
+    message
+        |> List.map pluralArgumentsFromPart
+        |> List.foldl Set.union Set.empty
+
+
+pluralArgumentsFromPart : Part -> Set String
+pluralArgumentsFromPart part =
+    case part of
+        Argument name details ->
+            case details of
+                None ->
+                    Set.empty
+
+                Simple _ _ ->
+                    Set.empty
+
+                Plural _ pluralSelectors ->
+                    pluralSelectors
+                        |> List.map (pluralSelectorMessage >> pluralArguments)
+                        |> List.foldl Set.union (Set.singleton name)
+
+                Select selectSelectors ->
+                    selectSelectors
+                        |> List.map (selectSelectorMessage >> pluralArguments)
+                        |> List.foldl Set.union Set.empty
+
+                Selectordinal _ pluralSelectors ->
+                    pluralSelectors
+                        |> List.map (pluralSelectorMessage >> pluralArguments)
+                        |> List.foldl Set.union (Set.singleton name)
+
+        _ ->
+            Set.empty
+
+
+{-| Return the names of all select arguments along with their possible
+choices.
+-}
 selectArguments : Message -> Dict String (Set String)
-selectArguments message =
+selectArguments (Message message) =
     message
         |> List.map selectArgumentsFromPart
         |> List.foldl Dict.union Dict.empty
@@ -139,6 +330,12 @@ selectArgumentsFromPart part =
     case part of
         Argument name details ->
             case details of
+                None ->
+                    Dict.empty
+
+                Simple _ _ ->
+                    Dict.empty
+
                 Plural _ pluralSelectors ->
                     pluralSelectors
                         |> List.map (pluralSelectorMessage >> selectArguments)
@@ -160,63 +357,53 @@ selectArgumentsFromPart part =
                         |> List.map (pluralSelectorMessage >> selectArguments)
                         |> List.foldl Dict.union Dict.empty
 
-                _ ->
-                    Dict.empty
-
         _ ->
             Dict.empty
 
 
-textArguments : Message -> Set String
-textArguments message =
+internalSelectArguments : Message -> Dict String (List SelectSelector)
+internalSelectArguments (Message message) =
     message
-        |> List.map textArgumentsFromPart
-        |> List.foldl Set.union Set.empty
+        |> List.map internalSelectArgumentsFromPart
+        |> List.foldl Dict.union Dict.empty
 
 
-textArgumentsFromPart : Part -> Set String
-textArgumentsFromPart part =
+internalSelectArgumentsFromPart : Part -> Dict String (List SelectSelector)
+internalSelectArgumentsFromPart part =
     case part of
         Argument name details ->
             case details of
                 None ->
-                    Set.singleton name
+                    Dict.empty
 
-                Simple Date _ ->
-                    Set.singleton name
-
-                Simple Time _ ->
-                    Set.singleton name
-
-                Simple Spellout _ ->
-                    Set.singleton name
+                Simple _ _ ->
+                    Dict.empty
 
                 Plural _ pluralSelectors ->
                     pluralSelectors
-                        |> List.map (pluralSelectorMessage >> textArguments)
-                        |> List.foldl Set.union Set.empty
+                        |> List.map (pluralSelectorMessage >> internalSelectArguments)
+                        |> List.foldl Dict.union Dict.empty
 
                 Select selectSelectors ->
                     selectSelectors
-                        |> List.map (selectSelectorMessage >> textArguments)
-                        |> List.foldl Set.union Set.empty
+                        |> List.map (selectSelectorMessage >> internalSelectArguments)
+                        |> List.foldl Dict.union (Dict.singleton name selectSelectors)
 
                 Selectordinal _ pluralSelectors ->
                     pluralSelectors
-                        |> List.map (pluralSelectorMessage >> textArguments)
-                        |> List.foldl Set.union Set.empty
-
-                _ ->
-                    Set.empty
+                        |> List.map (pluralSelectorMessage >> internalSelectArguments)
+                        |> List.foldl Dict.union Dict.empty
 
         _ ->
-            Set.empty
+            Dict.empty
 
 
 
 ---- PARSER
 
 
+{-| Parse a `String` containing an ICU Message.
+-}
 parse : String -> Result Parser.Error Message
 parse text =
     Parser.run icu text
@@ -244,6 +431,7 @@ message allowHash =
         |> repeat oneOrMore
         |> map joinTextParts
         |> inContext "a message"
+        |> map Message
 
 
 joinTextParts : List Part -> List Part
@@ -663,15 +851,18 @@ printStyle argStyle =
 ---- EVALUATER
 
 
+{-| -}
 type alias Values =
-    { number : Dict String Int
-    , select : Dict String String
-    , text : Dict String String
+    { noneArguments : Dict String String
+    , pluralArguments : Dict String Int
+    , selectArguments : Dict String String
     }
 
 
+{-| Evaluate an ICU Message.
+-}
 evaluate : Values -> Message -> String
-evaluate values message =
+evaluate values (Message message) =
     message
         |> List.map (evaluatePart values Nothing)
         |> String.concat
@@ -686,14 +877,14 @@ evaluatePart values maybeHash part =
         Argument name details ->
             case details of
                 None ->
-                    Dict.get name values.text
+                    Dict.get name values.noneArguments
                         |> Maybe.withDefault ("{" ++ name ++ "}")
 
                 Simple tvpe maybeStyle ->
                     "{TODO}"
 
                 Plural maybeOffset pluralSelectors ->
-                    case Dict.get name values.number of
+                    case Dict.get name values.pluralArguments of
                         Just value ->
                             evaluatePluralSelectors
                                 values
@@ -705,7 +896,7 @@ evaluatePart values maybeHash part =
                             "{" ++ name ++ "}"
 
                 Select selectSelectors ->
-                    case Dict.get name values.select of
+                    case Dict.get name values.selectArguments of
                         Just value ->
                             evaluateSelectSelectors values
                                 value
@@ -715,7 +906,7 @@ evaluatePart values maybeHash part =
                             "{" ++ name ++ "}"
 
                 Selectordinal maybeOffset pluralSelectors ->
-                    case Dict.get name values.number of
+                    case Dict.get name values.pluralArguments of
                         Just value ->
                             evaluatePluralSelectors
                                 values
@@ -747,7 +938,7 @@ evaluatePluralSelectors values maybeOffset value pluralSelectors =
     in
     pluralSelectors
         |> List.filterMap
-            (\(PluralSelector name message) ->
+            (\(PluralSelector name (Message message)) ->
                 case name of
                     ExplicitValue v ->
                         if v == value then
@@ -784,7 +975,7 @@ evaluateSelectSelectors values value selectSelectors =
     in
     selectSelectors
         |> List.filterMap
-            (\(SelectSelector v message) ->
+            (\(SelectSelector v (Message message)) ->
                 if v == value then
                     Just (evaluateMessage message)
                 else
@@ -801,18 +992,30 @@ evaluateSelectSelectors values value selectSelectors =
 type ArgumentType
     = StringArgument
     | IntArgument
+    | CustomArgument String
 
 
+{-| -}
 generateFunction : String -> Message -> String
 generateFunction translationKey message =
     let
         arguments =
-            [ numberArguments message
+            [ pluralArguments message
                 |> Set.toList
                 |> List.map (\argument -> ( IntArgument, argument ))
-            , textArguments message
+            , noneArguments message
                 |> Set.toList
                 |> List.map (\argument -> ( StringArgument, argument ))
+            , internalSelectArguments message
+                |> Dict.map
+                    (\argumentName selectSelectors ->
+                        selectType translationKey argumentName selectSelectors
+                    )
+                |> Dict.toList
+                |> List.map
+                    (\( argumentName, { name } ) ->
+                        ( CustomArgument name, argumentName )
+                    )
             ]
                 |> List.concat
     in
@@ -827,6 +1030,9 @@ generateFunction translationKey message =
 
                         IntArgument ->
                             "Int"
+
+                        CustomArgument tvpe ->
+                            tvpe
                 )
       , [ "String" ]
       ]
@@ -836,18 +1042,55 @@ generateFunction translationKey message =
     , (translationKey :: (arguments |> List.map Tuple.second))
         |> String.join " "
     , " =\n"
-    , generateMessage Nothing message
+    , generateMessage translationKey Nothing message
+        |> indent
+    , generateSelectTypes translationKey message
+    ]
+        |> String.concat
+
+
+generateSelectTypes : String -> Message -> String
+generateSelectTypes translationKey message =
+    let
+        selectTypes =
+            internalSelectArguments message
+                |> Dict.map
+                    (\argumentName selectSelectors ->
+                        selectType translationKey argumentName selectSelectors
+                    )
+    in
+    selectTypes
+        |> Dict.toList
+        |> List.map
+            (\( argumentName, selectType ) ->
+                generateSelectType argumentName selectType
+            )
+        |> String.concat
+
+
+generateSelectType : String -> SelectType -> String
+generateSelectType argumentName { name, possibilities } =
+    [ "\n\n\ntype "
+    , name
+    , "\n"
+    , [ "= "
+      , possibilities
+            |> Dict.toList
+            |> List.map Tuple.first
+            |> String.join "\n| "
+      ]
+        |> String.concat
         |> indent
     ]
         |> String.concat
 
 
-generateMessage : Maybe String -> Message -> String
-generateMessage maybeHashName message =
+generateMessage : String -> Maybe ( String, Int ) -> Message -> String
+generateMessage translationKey maybeHash (Message message) =
     let
         parts =
             message
-                |> List.map (generatePart maybeHashName)
+                |> List.map (generatePart translationKey maybeHash)
     in
     case parts of
         [] ->
@@ -866,8 +1109,8 @@ generateMessage maybeHashName message =
                 |> String.concat
 
 
-generatePart : Maybe String -> Part -> String
-generatePart maybeHashName part =
+generatePart : String -> Maybe ( String, Int ) -> Part -> String
+generatePart translationKey maybeHash part =
     case part of
         Text text ->
             [ "\""
@@ -877,9 +1120,13 @@ generatePart maybeHashName part =
                 |> String.concat
 
         Hash ->
-            case maybeHashName of
-                Just hashName ->
-                    hashName
+            case maybeHash of
+                Just ( hashName, offset ) ->
+                    [ hashName
+                    , " - "
+                    , toString offset
+                    ]
+                        |> String.concat
 
                 Nothing ->
                     Debug.crash "no hashname"
@@ -890,64 +1137,146 @@ generatePart maybeHashName part =
                     name
 
                 Plural maybeOffset pluralSelectors ->
-                    generatePlural name maybeOffset pluralSelectors
+                    generatePlural translationKey name maybeOffset pluralSelectors
+
+                Select selectSelectors ->
+                    generateSelect translationKey name selectSelectors
 
                 _ ->
                     "TODO"
 
 
-generatePlural : String -> Maybe Int -> List PluralSelector -> String
-generatePlural argumentName maybeOffset pluralSelectors =
+generatePlural : String -> String -> Maybe Int -> List PluralSelector -> String
+generatePlural translationKey argumentName maybeOffset pluralSelectors =
     let
+        offset =
+            maybeOffset |> Maybe.withDefault 0
+
         generatePluralSelector (PluralSelector selectorName message) =
             case selectorName of
                 Many ->
-                    ( -1, selectorName, generateMessage (Just argumentName) message )
+                    ( -1
+                    , selectorName
+                    , generateMessage
+                        translationKey
+                        (Just ( argumentName, offset ))
+                        message
+                    )
 
                 Few ->
-                    ( -2, selectorName, generateMessage (Just argumentName) message )
+                    ( -2
+                    , selectorName
+                    , generateMessage
+                        translationKey
+                        (Just ( argumentName, offset ))
+                        message
+                    )
 
                 Other ->
-                    ( -3, selectorName, generateMessage (Just argumentName) message )
+                    ( -3
+                    , selectorName
+                    , generateMessage
+                        translationKey
+                        (Just ( argumentName, offset ))
+                        message
+                    )
 
                 ExplicitValue amount ->
-                    ( amount, selectorName, generateMessage (Just argumentName) message )
-    in
-    case maybeOffset of
-        Nothing ->
-            [ "case "
-            , argumentName
-            , " of\n"
-            , pluralSelectors
-                |> List.map generatePluralSelector
-                |> List.sortBy (\( ord, _, _ ) -> -1 * ord)
-                |> List.map
-                    (\( _, selectorName, text ) ->
-                        case selectorName of
-                            ExplicitValue amount ->
-                                [ toString amount
-                                , " ->\n"
-                                , indent text
-                                ]
-                                    |> String.concat
-
-                            Other ->
-                                [ "_ ->\n"
-                                , indent text
-                                ]
-                                    |> String.concat
-
-                            _ ->
-                                "TODO"
+                    ( amount
+                    , selectorName
+                    , generateMessage
+                        translationKey
+                        (Just ( argumentName, offset ))
+                        message
                     )
-                |> List.intersperse "\n\n"
-                |> String.concat
-                |> indent
+    in
+    [ "case "
+    , argumentName
+    , " of\n"
+    , pluralSelectors
+        |> List.map generatePluralSelector
+        |> List.sortBy (\( ord, _, _ ) -> -1 * ord)
+        |> List.map
+            (\( _, selectorName, text ) ->
+                case selectorName of
+                    ExplicitValue amount ->
+                        [ toString amount
+                        , " ->\n"
+                        , indent text
+                        ]
+                            |> String.concat
+
+                    Other ->
+                        [ "_ ->\n"
+                        , indent text
+                        ]
+                            |> String.concat
+
+                    _ ->
+                        "TODO"
+            )
+        |> List.intersperse "\n\n"
+        |> String.concat
+        |> indent
+    ]
+        |> String.concat
+
+
+generateSelect : String -> String -> List SelectSelector -> String
+generateSelect translationKey argumentName selectSelectors =
+    let
+        { name, possibilities } =
+            selectType translationKey argumentName selectSelectors
+    in
+    [ "case "
+    , argumentName
+    , " of\n"
+    , possibilities
+        |> Dict.toList
+        |> List.map
+            (\( selectorName, message ) ->
+                [ selectorName
+                , " ->\n"
+                , generateMessage translationKey Nothing message |> indent
+                ]
+                    |> String.concat
+            )
+        |> List.intersperse "\n\n"
+        |> String.concat
+        |> indent
+    ]
+        |> String.concat
+
+
+type alias SelectType =
+    { name : String
+    , possibilities : Dict String Message
+    }
+
+
+selectType : String -> String -> List SelectSelector -> SelectType
+selectType translationKey argumentName selectSelectors =
+    let
+        name =
+            [ translationKey |> String.toSentenceCase
+            , argumentName |> String.toSentenceCase
             ]
                 |> String.concat
 
-        Just _ ->
-            "TODO"
+        possibility (SelectSelector selectorName message) =
+            ( [ name
+              , selectorName |> String.toSentenceCase
+              ]
+                |> String.concat
+            , message
+            )
+    in
+    { name = name
+    , possibilities =
+        selectSelectors
+            |> List.map possibility
+            |> Dict.fromList
+    }
 
 
 
