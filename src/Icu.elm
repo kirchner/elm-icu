@@ -35,8 +35,12 @@ called `Message`.
 
     will result in the following elm code
 
-        itemCountInfo : Int -> String -> String
-        itemCountInfo count item =
+        itemCountInfo :
+            { count : Int
+            , item : String
+            }
+            -> String
+        itemCountInfo { count, item } =
             case count of
                 1 ->
                     [ "There is one "
@@ -64,10 +68,11 @@ called `Message`.
 
 # Open things
 
-  - code generation for simple and selectordinal arguments
+  - code generation for simple arguments
+  - proper evaluation of simple arguments
 
 
-# EBNF
+# Used Grammar
 
 Check out the original [ICU Message
 Format](http://icu-project.org/apiref/icu4j/com/ibm/icu/text/MessageFormat.html).
@@ -990,7 +995,10 @@ evaluateSelectSelectors values value selectSelectors =
 ---- GENERATE ELM CODE
 
 
-{-| -}
+{-| Generate elm code from the given `Message`. The first argument is
+the name of the generated function. Take a look at the package
+documentation for an example.
+-}
 generate : String -> Message -> String
 generate translationKey message =
     let
