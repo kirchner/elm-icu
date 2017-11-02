@@ -11,7 +11,6 @@ import Html exposing (Html)
 import Html.Attributes as Attributes
 import List.Extra as List
 import Parser exposing (..)
-import Parser.LanguageKit exposing (..)
 
 
 {-| Put the output inside a pre-tag, for example like this:

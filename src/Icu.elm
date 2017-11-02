@@ -259,17 +259,17 @@ noneArgumentsFromPart part =
 
                 Plural _ pluralSelectors ->
                     pluralSelectors
-                        |> List.map (pluralSelectorMessage >> pluralArguments)
+                        |> List.map (pluralSelectorMessage >> noneArguments)
                         |> List.foldl Set.union Set.empty
 
                 Select selectSelectors ->
                     selectSelectors
-                        |> List.map (selectSelectorMessage >> pluralArguments)
+                        |> List.map (selectSelectorMessage >> noneArguments)
                         |> List.foldl Set.union Set.empty
 
                 Selectordinal _ pluralSelectors ->
                     pluralSelectors
-                        |> List.map (pluralSelectorMessage >> pluralArguments)
+                        |> List.map (pluralSelectorMessage >> noneArguments)
                         |> List.foldl Set.union Set.empty
 
         _ ->

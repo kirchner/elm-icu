@@ -26,75 +26,74 @@ main =
 
 type alias Model =
     { text : String
-    , numberValues : Dict String Int
+    , noneValues : Dict String String
+    , pluralValues : Dict String Int
     , selectValues : Dict String String
-    , textValues : Dict String String
     }
 
 
 model : Model
 model =
     { text =
-        """
-{gender_of_host, select,
-  female {
-    {num_guests, plural, offset:1
-      =0 {{host} does not give a party.}
-      =1 {{host} invites {guest} to her party.}
-      =2 {{host} invites {guest} and one other person to her party.}
-      other {{host} invites {guest} and # other people to her party.}}}
-  male {
-    {num_guests, plural, offset:1
-      =0 {{host} does not give a party.}
-      =1 {{host} invites {guest} to his party.}
-      =2 {{host} invites {guest} and one other person to his party.}
-      other {{host} invites {guest} and # other people to his party.}}}
-  other {
-    {num_guests, plural, offset:1
-      =0 {{host} does not give a party.}
-      =1 {{host} invites {guest} to their party.}
-      =2 {{host} invites {guest} and one other person to their party.}
-      other {{host} invites {guest} and # other people to their party.}}}}
-        """
-
-    -- text = "You {NUM_ADDS, plural,\n offset:1\n =0{did not add this}\n =1{added this}\n one{and one other person added this}\n other{and # others added this}\n}"
-    , numberValues = Dict.empty
+        [ "{genderOfHost, select,"
+        , [ "female"
+          , "{{numGuests, plural, offset:1 "
+          , "=0 {{host} does not give a party.}"
+          , "=1 {{host} invites {guest} to her party.}"
+          , "=2 {{host} invites {guest} and one other person to her party.}"
+          , "other {{host} invites {guest} and # other people to her party.}}}"
+          ]
+            |> String.concat
+        , [ "male"
+          , "{{numGuests, plural, offset:1 "
+          , "=0 {{host} does not give a party.}"
+          , "=1 {{host} invites {guest} to his party.}"
+          , "=2 {{host} invites {guest} and one other person to his party.}"
+          , "other {{host} invites {guest} and # other people to his party.}}}"
+          ]
+            |> String.concat
+        , [ "other"
+          , "{{numGuests, plural, offset:1 "
+          , "=0 {{host} does not give a party.}"
+          , "=1 {{host} invites {guest} to their party.}"
+          , "=2 {{host} invites {guest} and one other person to their party.}"
+          , "other {{host} invites {guest} and # other people to their party.}}}"
+          ]
+            |> String.concat
+        , "}"
+        ]
+            |> String.concat
+    , noneValues = Dict.empty
+    , pluralValues = Dict.empty
     , selectValues = Dict.empty
-    , textValues = Dict.empty
     }
 
 
 type Msg
-    = UpdateText String
-    | UpdateNumberValue String String
+    = NoOp
+    | UpdateText String
+    | UpdateNoneValue String String
+    | UpdatePluralValue String Int
     | UpdateSelectValue String String
-    | UpdateTextValue String String
 
 
 update : Msg -> Model -> Model
 update msg model =
     case msg of
+        NoOp ->
+            model
+
         UpdateText newText ->
             { model | text = newText }
 
-        UpdateNumberValue name value ->
-            case String.toInt value of
-                Ok int ->
-                    { model | numberValues = Dict.insert name int model.numberValues }
+        UpdateNoneValue name value ->
+            { model | noneValues = Dict.insert name value model.noneValues }
 
-                Err _ ->
-                    model
+        UpdatePluralValue name value ->
+            { model | pluralValues = Dict.insert name value model.pluralValues }
 
         UpdateSelectValue name value ->
             { model | selectValues = Dict.insert name value model.selectValues }
-
-        UpdateTextValue name value ->
-            case value of
-                "" ->
-                    { model | textValues = Dict.remove name model.textValues }
-
-                _ ->
-                    { model | textValues = Dict.insert name value model.textValues }
 
 
 view : Model -> Html Msg
@@ -133,9 +132,9 @@ view model =
                     Html.div
                         []
                         [ data
-                            |> Icu.textArguments
+                            |> Icu.noneArguments
                             |> Set.toList
-                            |> List.map (viewTextArgumentInput UpdateTextValue)
+                            |> List.map viewNoneArgumentInput
                             |> Html.div
                                 [ Attributes.style
                                     [ "display" => "flex"
@@ -144,9 +143,9 @@ view model =
                                     ]
                                 ]
                         , data
-                            |> Icu.numberArguments
+                            |> Icu.pluralArguments
                             |> Set.toList
-                            |> List.map (viewNumberArgumentInput UpdateNumberValue)
+                            |> List.map viewPluralArgumentInput
                             |> Html.div
                                 [ Attributes.style
                                     [ "display" => "flex"
@@ -159,7 +158,7 @@ view model =
                             |> Dict.toList
                             |> List.map
                                 (\( name, values ) ->
-                                    viewSelectArgumentInput UpdateSelectValue name values
+                                    viewSelectArgumentInput name values
                                 )
                             |> Html.div
                                 [ Attributes.style
@@ -173,9 +172,9 @@ view model =
                                 [ "font-family" => "'Source Code Pro', Consolas, \"Liberation Mono\", Menlo, Courier, monospace" ]
                             ]
                             [ Icu.evaluate
-                                { text = model.textValues
-                                , select = model.selectValues
-                                , number = model.numberValues
+                                { noneArguments = model.noneValues
+                                , pluralArguments = model.pluralValues
+                                , selectArguments = model.selectValues
                                 }
                                 data
                                 |> Html.text
@@ -188,12 +187,29 @@ view model =
         ]
 
 
-viewNumberArgumentInput : (String -> String -> msg) -> String -> Html msg
-viewNumberArgumentInput updateNumberValue name =
+viewNoneArgumentInput : String -> Html Msg
+viewNoneArgumentInput name =
     Html.div []
         [ Html.text name
         , Html.input
-            [ Events.onInput (updateNumberValue name)
+            [ Events.onInput (UpdateNoneValue name) ]
+            []
+        ]
+
+
+viewPluralArgumentInput : String -> Html Msg
+viewPluralArgumentInput name =
+    Html.div []
+        [ Html.text name
+        , Html.input
+            [ Events.onInput <|
+                \value ->
+                    case value |> String.toInt of
+                        Ok int ->
+                            UpdatePluralValue name int
+
+                        Err _ ->
+                            NoOp
             , Attributes.type_ "number"
             , Attributes.min "0"
             ]
@@ -201,8 +217,8 @@ viewNumberArgumentInput updateNumberValue name =
         ]
 
 
-viewSelectArgumentInput : (String -> String -> msg) -> String -> Set String -> Html msg
-viewSelectArgumentInput updateSelectValue name values =
+viewSelectArgumentInput : String -> Set String -> Html Msg
+viewSelectArgumentInput name values =
     let
         viewOption value =
             Html.option
@@ -215,17 +231,7 @@ viewSelectArgumentInput updateSelectValue name values =
             |> Set.toList
             |> List.map viewOption
             |> Html.select
-                [ Events.onInput (updateSelectValue name) ]
-        ]
-
-
-viewTextArgumentInput : (String -> String -> msg) -> String -> Html msg
-viewTextArgumentInput updateValue name =
-    Html.div []
-        [ Html.text name
-        , Html.input
-            [ Events.onInput (updateValue name) ]
-            []
+                [ Events.onInput (UpdateSelectValue name) ]
         ]
 
 
