@@ -52,7 +52,7 @@ generate translations =
                 Ok sum ->
                     case Icu.parse icuMessage of
                         Ok icuValue ->
-                            [ Icu.generateFunction translationKey icuValue
+                            [ Icu.generate translationKey icuValue
                             , "\n\n\n"
                             ]
                                 |> String.concat

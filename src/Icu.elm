@@ -3,7 +3,7 @@ module Icu
         ( Message
         , Values
         , evaluate
-        , generateFunction
+        , generate
         , noneArguments
         , parse
         , pluralArguments
@@ -21,7 +21,7 @@ called `Message`.
     String` by providing dictionaries containing the needed values.
 
   - You can generate elm code of functions from `Message`'s using
-    `generateFunction : String -> Message -> String`. For example
+    `generate : String -> Message -> String`. For example
 
         [ "{count, plural,"
         , "=0{There is no {item}.} "
@@ -31,7 +31,7 @@ called `Message`.
         ]
             |> String.concat
             |> parse
-            |> Result.map (generateFunction "itemCountInfo")
+            |> Result.map (generate  "itemCountInfo")
 
     will result in the following elm code
 
@@ -156,12 +156,13 @@ duration](http://icu-project.org/apiref/icu4j/com/ibm/icu/text/RuleBasedNumberFo
 
 # Code generation
 
-@docs generateFunction
+@docs generate
 
 -}
 
 import Char
 import Dict exposing (Dict)
+import Internal.Generate as Generate exposing (indent)
 import Parser exposing (..)
 import Parser.LanguageKit exposing (..)
 import Set exposing (Set)
@@ -990,10 +991,11 @@ evaluateSelectSelectors values value selectSelectors =
 
 
 {-| -}
-generateFunction : String -> Message -> String
-generateFunction translationKey message =
-    let
-        arguments =
+generate : String -> Message -> String
+generate translationKey message =
+    [ Generate.function
+        { name = translationKey
+        , arguments =
             [ pluralArguments message
                 |> Set.toList
                 |> List.map (\argument -> ( "Int", argument ))
@@ -1012,21 +1014,9 @@ generateFunction translationKey message =
                     )
             ]
                 |> List.concat
-    in
-    [ translationKey
-    , " : "
-    , [ arguments
-            |> List.map Tuple.first
-      , [ "String" ]
-      ]
-        |> List.concat
-        |> String.join " -> "
-    , "\n"
-    , (translationKey :: (arguments |> List.map Tuple.second))
-        |> String.join " "
-    , " =\n"
-    , generateMessage translationKey Nothing message
-        |> indent
+        , returnType = "String"
+        , body = generateMessage translationKey Nothing message
+        }
     , generateSelectTypes translationKey message
     ]
         |> String.concat
@@ -1053,17 +1043,14 @@ generateSelectTypes translationKey message =
 
 generateSelectType : String -> SelectType -> String
 generateSelectType argumentName { name, possibilities } =
-    [ "\n\n\ntype "
-    , name
-    , "\n"
-    , [ "= "
-      , possibilities
-            |> Dict.toList
-            |> List.map Tuple.first
-            |> String.join "\n| "
-      ]
-        |> String.concat
-        |> indent
+    [ "\n\n\n"
+    , Generate.tvpe
+        { name = name
+        , constructors =
+            possibilities
+                |> Dict.toList
+                |> List.map Tuple.first
+        }
     ]
         |> String.concat
 
@@ -1077,16 +1064,13 @@ generateMessage translationKey maybeHash (Message message) =
     in
     case parts of
         [] ->
-            "\"\""
+            Generate.string ""
 
         part :: [] ->
             part
 
         _ ->
-            [ "[ "
-            , parts
-                |> String.join "\n, "
-            , "\n]\n"
+            [ Generate.list parts
             , indent "|> String.concat"
             ]
                 |> String.concat
@@ -1096,11 +1080,7 @@ generatePart : String -> Maybe ( String, Int ) -> Part -> String
 generatePart translationKey maybeHash part =
     case part of
         Text text ->
-            [ "\""
-            , text
-            , "\""
-            ]
-                |> String.concat
+            Generate.string text
 
         Hash ->
             case maybeHash of
@@ -1173,62 +1153,40 @@ generatePlural translationKey argumentName maybeOffset pluralSelectors =
                         message
                     )
     in
-    [ "case "
-    , argumentName
-    , " of\n"
-    , pluralSelectors
-        |> List.map generatePluralSelector
-        |> List.sortBy (\( ord, _, _ ) -> -1 * ord)
-        |> List.map
-            (\( _, selectorName, text ) ->
-                case selectorName of
-                    ExplicitValue amount ->
-                        [ toString amount
-                        , " ->\n"
-                        , indent text
-                        ]
-                            |> String.concat
+    Generate.caseOf
+        { expression = argumentName
+        , cases =
+            pluralSelectors
+                |> List.map generatePluralSelector
+                |> List.sortBy (\( ord, _, _ ) -> -1 * ord)
+                |> List.map
+                    (\( _, selectorName, text ) ->
+                        case selectorName of
+                            ExplicitValue amount ->
+                                ( toString amount, text )
 
-                    Other ->
-                        [ "_ ->\n"
-                        , indent text
-                        ]
-                            |> String.concat
+                            Other ->
+                                ( "_", text )
 
-                    _ ->
-                        "TODO"
-            )
-        |> List.intersperse "\n\n"
-        |> String.concat
-        |> indent
-    ]
-        |> String.concat
+                            _ ->
+                                ( "TODO", "TODO" )
+                    )
+        }
 
 
 generateSelect : String -> String -> List SelectSelector -> String
 generateSelect translationKey argumentName selectSelectors =
-    let
-        { name, possibilities } =
+    Generate.caseOf
+        { expression = argumentName
+        , cases =
             selectType translationKey argumentName selectSelectors
-    in
-    [ "case "
-    , argumentName
-    , " of\n"
-    , possibilities
-        |> Dict.toList
-        |> List.map
-            (\( selectorName, message ) ->
-                [ selectorName
-                , " ->\n"
-                , generateMessage translationKey Nothing message |> indent
-                ]
-                    |> String.concat
-            )
-        |> List.intersperse "\n\n"
-        |> String.concat
-        |> indent
-    ]
-        |> String.concat
+                |> .possibilities
+                |> Dict.map
+                    (\_ message ->
+                        generateMessage translationKey Nothing message
+                    )
+                |> Dict.toList
+        }
 
 
 type alias SelectType =
@@ -1260,15 +1218,3 @@ selectType translationKey argumentName selectSelectors =
             |> List.map possibility
             |> Dict.fromList
     }
-
-
-
----- HELPER
-
-
-indent : String -> String
-indent text =
-    text
-        |> String.split "\n"
-        |> List.map (\line -> "    " ++ line)
-        |> String.join "\n"
