@@ -1,0 +1,21 @@
+[submodule "data/cldr-core"]
+	path = data/cldr-core
+	url = https://github.com/unicode-cldr/cldr-core
+[submodule "data/cldr-dates-full"]
+	path = data/cldr-dates-full
+	url = https://github.com/unicode-cldr/cldr-dates-full
+[submodule "data/cldr-localenames-full"]
+	path = data/cldr-localenames-full
+	url = https://github.com/unicode-cldr/cldr-localenames-full
+[submodule "data/cldr-misc-full"]
+	path = data/cldr-misc-full
+	url = https://github.com/unicode-cldr/cldr-misc-full
+[submodule "data/cldr-numbers-full"]
+	path = data/cldr-numbers-full
+	url = https://github.com/unicode-cldr/cldr-numbers-full
+[submodule "data/cldr-rbnf"]
+	path = data/cldr-rbnf
+	url = https://github.com/unicode-cldr/cldr-rbnf
+[submodule "data/cldr-units-full"]
+	path = data/cldr-units-full
+	url = https://github.com/unicode-cldr/cldr-units-full
